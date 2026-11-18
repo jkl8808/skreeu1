@@ -20,7 +20,7 @@ It talks to Moonraker directly and keeps the stock services (unisrv / MQTT) runn
 - **更换耗材**：品牌列 + 28 色调色板 + 型号列表，支持自定义品牌和自定义类型
 - **打印页**：进度环、速度倍率、Z-offset、暂停/继续/取消
 - **维护页**：净化器、换头次数、喷嘴、空打检测、异物检测
-- **设置页**：设备信息、7 项打印偏好、运行统计、灯光
+- **设置页**：设备信息（SN / 固件 / 喷嘴，从打印机读取）、7 项打印偏好、运行统计、灯光
 - 所有写操作都是**乐观更新**：先用本地值显示，轮询确认不上就 8 秒后弹提示并回退
 - 中文用 FreeType 运行时渲染，不预烘焙字库；整屏强制重绘约 2ms/帧，空闲 CPU ≈1%
 
@@ -33,6 +33,9 @@ It talks to Moonraker directly and keeps the stock services (unisrv / MQTT) runn
 | ![更换耗材](docs/screenshots/materials.png) | ![打印](docs/screenshots/print.png) | ![维护](docs/screenshots/maintenance.png) |
 
 设置页：[docs/screenshots/settings.png](docs/screenshots/settings.png)
+
+> 设备信息（机型、SN、固件、喷嘴）优先从 Moonraker 的 `/machine/system_info` 读取，
+> 和 Snapmaker Orca 用的是同一份数据；仓库里的 `assets/product_info.json` 只是离线开发时的回退示例。
 
 ## 风险与恢复
 
@@ -91,6 +94,7 @@ scripts/run_vnc.sh --host 192.168.1.50 --readonly
 | `--port` / `U1UI_PORT` | Moonraker 端口（默认 `7125`） |
 | `--readonly` / `U1UI_READONLY=1` | 只轮询，所有写命令都不下发 |
 | `U1UI_FONTS` | 字体目录（默认 `assets/fonts`；设备上是 `/userdata/u1ui/assets/fonts`） |
+| `U1UI_PRODUCT_INFO` | 离线时回退用的 `product_info.json` 路径（默认 `/oem/printer_data/config/snapmaker/product_info.json`） |
 | `U1UI_RAIL=right` | 导航栏换到右侧 |
 | `--shot out.png --page N [--scroll N]` | 无头渲染一张 PNG |
 | `--sheet N` | 截图时打开第 N 个喷嘴（0–3）的详情 |
