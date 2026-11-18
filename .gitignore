@@ -1,0 +1,23 @@
+# 构建产物
+/build/
+/build-*/
+/compile_commands.json
+
+# 从打印机拷下来的目标机库（用 scripts/fetch_sysroot.sh 生成，不入库）
+/sysroot/lib/*.so*
+
+# 运行时生成的配置
+/u1ui_temps.cfg
+/u1ui_bed_temps.cfg
+/u1ui_brands.cfg
+/u1ui_types.cfg
+
+# Python
+__pycache__/
+*.pyc
+
+# 编辑器 / 系统文件
+.vscode/
+.idea/
+*.swp
+.DS_Store

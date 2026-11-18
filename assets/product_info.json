@@ -1,0 +1,13 @@
+{
+	"machine_type": "Snapmaker U1",
+	"nozzle_diameter": [
+		0.4,
+		0.4,
+		0.4,
+		0.8
+	],
+	"serial_number": "0000000000000000",
+	"device_name": "U1",
+	"firmware_version": "2.1.0",
+	"software_version": "2.1.0"
+}
