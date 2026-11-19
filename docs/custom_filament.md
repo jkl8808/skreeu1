@@ -196,4 +196,4 @@ python3 tools/filament_tool.py
 | 打印机的品牌/类型改了，Orca 没变 | 同步是打印机→切片单向；且需要刷新/重连 |
 | 自定义类型没出现在 skreeu1 列表 | `skreeu1_types.cfg` 格式不对（一行 `TYPE` 或 `TYPE SUBTYPE`） |
 | 改完 skreeu1 配置没生效 | 品牌/类型每次打开界面重读；快捷温度启动时读；必要时重启 skreeu1 |
-| Orca 连不上打印机 | 打印机必须在 LAN 模式；账号登录只解决云端身份 |
+| Orca 连不上打印机 | 先检查打印机在线、Orca 账号/网络；skreeu1 不改变网络模式，云服务和 LAN 都可以用 |

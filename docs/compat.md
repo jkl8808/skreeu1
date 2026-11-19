@@ -102,5 +102,6 @@ filament_motion_sensor e0_filament .. e3_filament
 
 ## 6. 还没接上的
 
-摄像头 / 延时摄影、OTA、局域网访问码、云端账号仍然只在 unisrv 的 MQTT 里
-（真机 `127.0.0.1:3893`），SKREEU1 目前没有 MQTT 客户端。
+摄像头 / 延时摄影、OTA、局域网访问码、云端账号仍然由 unisrv 的 MQTT 服务负责
+（真机 `127.0.0.1:3893`），skreeu1 不接管这部分，所以原厂 App、Snapmaker 云服务
+和局域网连接都不受影响。

@@ -44,6 +44,9 @@ It talks to Moonraker directly and keeps the stock services (unisrv / MQTT) runn
 > 设备信息（机型、SN、固件、喷嘴）优先从 Moonraker 的 `/machine/system_info` 读取，
 > 和 Snapmaker Orca 用的是同一份数据；仓库里的 `assets/product_info.json` 只是离线开发时的回退示例。
 
+> **只替换屏幕 GUI**：lmd / unisrv / MQTT / Moonraker / 网络模式都不动，
+> 原厂 App、Snapmaker 云服务和 Orca 的连接方式保持原样，不要求切 LAN 模式。
+
 ## 风险与恢复
 
 接管屏幕的方式是：把 skreeu1 只读 bind mount 到 `/usr/bin/gui`，然后只杀掉 gui 子进程，
@@ -282,8 +285,8 @@ third_party/    nlohmann/json
 
 ## 已知限制
 
-- 摄像头 / 延时摄影、OTA、局域网访问码、云端账号还没接（这些在 unisrv 的 MQTT 里）。
-- 打印机必须处于 LAN 模式，Snapmaker Orca 才能直接连上。
+- 摄像头 / 延时摄影、OTA、局域网访问码、云端账号仍由 unisrv 负责，skreeu1 不接管；
+  所以原厂 App、Snapmaker 云服务和 Orca 都按原样工作，不要求切到 LAN 模式。
 - 只在 U1 / 固件 2.1.0 上验证过；其他固件版本的对象名和命令可能不同。
 - Wi-Fi 面板暂不支持手动输入隐藏 SSID，也没有做 Wi-Fi 射频开关（只做连接/断开）。
 - 看门狗依赖 `wpa_supplicant` 二进制和原厂 `/home/lava/printer_data/gui/wpa_supplicant.conf`；
