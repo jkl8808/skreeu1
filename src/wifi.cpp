@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <map>
 #include <poll.h>
 #include <signal.h>
@@ -138,6 +139,35 @@ std::string find_wpa_cli() {
     return "wpa_cli";
 }
 
+std::string find_wpa_sup() {
+    const char* candidates[] = {"/usr/sbin/wpa_supplicant", "/sbin/wpa_supplicant",
+                                "wpa_supplicant"};
+    for (const char* c : candidates)
+        if (access(c, X_OK) == 0) return c;
+    return "wpa_supplicant";
+}
+
+std::string find_pgrep() {
+    const char* candidates[] = {"/usr/bin/pgrep", "/bin/pgrep", "pgrep"};
+    for (const char* c : candidates)
+        if (access(c, X_OK) == 0) return c;
+    return "pgrep";
+}
+
+std::string find_ifconfig() {
+    const char* candidates[] = {"/usr/sbin/ifconfig", "/sbin/ifconfig", "ifconfig"};
+    for (const char* c : candidates)
+        if (access(c, X_OK) == 0) return c;
+    return "ifconfig";
+}
+
+std::string find_killall() {
+    const char* candidates[] = {"/usr/bin/killall", "/bin/killall", "killall"};
+    for (const char* c : candidates)
+        if (access(c, X_OK) == 0) return c;
+    return "killall";
+}
+
 std::string find_ip() {
     const char* candidates[] = {"/usr/sbin/ip", "/sbin/ip", "ip"};
     for (const char* c : candidates)
@@ -151,9 +181,11 @@ Wifi::Wifi() {
     const char* iface = getenv("SKREEU1_WIFI_IF");
     iface_ = iface && *iface ? iface : "wlan0";
     wpa_cli_ = find_wpa_cli();
+    wpa_sup_ = find_wpa_sup();
     const char* conf = getenv("SKREEU1_WPA_CONF");
     conf_ = conf && *conf ? conf
                           : "/home/lava/printer_data/gui/wpa_supplicant.conf";
+    device_ = access(conf_.c_str(), R_OK) == 0 && access(wpa_sup_.c_str(), X_OK) == 0;
     mock_ = getenv("SKREEU1_WIFI_MOCK") != nullptr;
 
     if (mock_) {
@@ -262,45 +294,124 @@ void Wifi::request_reconnect() {
     enqueue([this] { do_reconnect(); });
 }
 
+void Wifi::request_service_restart() {
+    if (mock_) return;
+    enqueue([this] { do_service_restart(true); });
+}
+
 WifiSnapshot Wifi::snapshot() {
     std::lock_guard<std::mutex> lk(snap_mu_);
     return snap_;
 }
 
 void Wifi::do_status() {
-    if (access("/var/run/wpa_supplicant", F_OK) != 0 && access(wpa_cli_.c_str(), X_OK) != 0) {
-        std::lock_guard<std::mutex> lk(snap_mu_);
-        snap_.available = false;
-        snap_.connected = false;
-        return;
-    }
+    if (mock_) return;
     std::string out = run_cmd({wpa_cli_, "-i", iface_, "status"}, 5000);
     auto kv = parse_kv(out);
     bool ok = !kv.empty() && kv.count("wpa_state");
-    std::lock_guard<std::mutex> lk(snap_mu_);
-    snap_.available = ok;
-    if (!ok) {
-        snap_.connected = false;
-        snap_.state = "UNAVAILABLE";
-        return;
-    }
-    snap_.state = kv["wpa_state"];
-    snap_.connected = snap_.state == "COMPLETED";
-    snap_.ssid = decode_ssid(kv.count("ssid") ? kv["ssid"] : "");
-    snap_.ip = kv.count("ip_address") ? kv["ip_address"] : "";
-    if (snap_.connected && snap_.ip.empty()) {
-        std::string ip_out = run_cmd({find_ip(), "-4", "addr", "show", "dev", iface_}, 3000);
-        size_t p = ip_out.find(" inet ");
-        if (p != std::string::npos) {
-            size_t e = ip_out.find('/', p + 6);
-            if (e != std::string::npos) snap_.ip = ip_out.substr(p + 6, e - (p + 6));
+    long now = (long)time(nullptr);
+    bool need_restart = false;
+    {
+        std::lock_guard<std::mutex> lk(snap_mu_);
+        snap_.available = ok;
+        if (!ok) {
+            snap_.connected = false;
+            snap_.state = "UNAVAILABLE";
+            if (unavailable_since_ == 0) {
+                unavailable_since_ = now;
+                log("status failed: wpa_supplicant unavailable");
+            } else if (device_ && !restart_busy_ &&
+                       now - unavailable_since_ >= 10 && now - last_restart_ >= 60) {
+                need_restart = true;
+            }
+        } else {
+            if (unavailable_since_ != 0) {
+                unavailable_since_ = 0;
+                log("wpa_supplicant available again");
+            }
+            snap_.state = kv["wpa_state"];
+            snap_.connected = snap_.state == "COMPLETED";
+            snap_.ssid = decode_ssid(kv.count("ssid") ? kv["ssid"] : "");
+            snap_.ip = kv.count("ip_address") ? kv["ip_address"] : "";
+            if (snap_.connected && snap_.ip.empty()) {
+                std::string ip_out =
+                    run_cmd({find_ip(), "-4", "addr", "show", "dev", iface_}, 3000);
+                size_t p = ip_out.find(" inet ");
+                if (p != std::string::npos) {
+                    size_t e = ip_out.find('/', p + 6);
+                    if (e != std::string::npos)
+                        snap_.ip = ip_out.substr(p + 6, e - (p + 6));
+                }
+            }
+            if (snap_.connected) {
+                std::string sig = run_cmd({wpa_cli_, "-i", iface_, "signal_poll"}, 3000);
+                auto skv = parse_kv(sig);
+                if (skv.count("RSSI")) snap_.rssi = atoi(skv["RSSI"].c_str());
+            }
         }
     }
-    if (snap_.connected) {
-        std::string sig = run_cmd({wpa_cli_, "-i", iface_, "signal_poll"}, 3000);
-        auto skv = parse_kv(sig);
-        if (skv.count("RSSI")) snap_.rssi = atoi(skv["RSSI"].c_str());
+    if (need_restart) {
+        last_restart_ = now;
+        do_service_restart(false);
     }
+}
+
+void Wifi::log(const std::string& msg) {
+    if (!device_) return;
+    FILE* f = fopen("/userdata/logs/skreeu1-wifi.log", "a");
+    if (!f) return;
+    time_t t = time(nullptr);
+    struct tm tmv;
+    localtime_r(&t, &tmv);
+    char ts[32];
+    strftime(ts, sizeof ts, "%F %T", &tmv);
+    fprintf(f, "%s %s\n", ts, msg.c_str());
+    fclose(f);
+}
+
+void Wifi::do_service_restart(bool force) {
+    if (mock_ || restart_busy_.exchange(true)) return;
+    {
+        std::lock_guard<std::mutex> lk(snap_mu_);
+        snap_.restarting = true;
+        snap_.error.clear();
+    }
+    log(force ? "manual Wi-Fi service restart" : "watchdog: restarting Wi-Fi service");
+
+    std::string pid = trim(run_cmd({find_pgrep(), "-x", "wpa_supplicant"}, 2000));
+    if (!force && !pid.empty()) {
+        run_cmd({wpa_cli_, "-i", iface_, "reconnect"}, 5000);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+        do_status();
+        WifiSnapshot s = snapshot();
+        if (s.available) {
+            log("reconnect succeeded");
+            std::lock_guard<std::mutex> lk(snap_mu_);
+            snap_.restarting = false;
+            restart_busy_ = false;
+            return;
+        }
+    }
+
+    if (!pid.empty()) run_cmd({find_killall(), "wpa_supplicant"}, 3000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));
+    run_cmd({"rm", "-f", "/var/run/wpa_supplicant/" + iface_}, 2000);
+    run_cmd({find_ifconfig(), iface_, "up"}, 3000);
+    std::string out;
+    if (access(conf_.c_str(), R_OK) == 0)
+        out = run_cmd({wpa_sup_, "-B", "-i", iface_, "-c", conf_}, 15000);
+    else
+        out = "missing config " + conf_;
+    log("start: " + trim(out));
+    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+    run_cmd({wpa_cli_, "-i", iface_, "reconnect"}, 5000);
+    do_status();
+    {
+        std::lock_guard<std::mutex> lk(snap_mu_);
+        snap_.restarting = false;
+        if (!snap_.available) snap_.error = "Wi-Fi 服务重启失败";
+    }
+    restart_busy_ = false;
 }
 
 void Wifi::do_scan() {
@@ -373,10 +484,6 @@ void Wifi::do_connect(std::string ssid, std::string password, bool sae) {
             existed = true;
         }
     }
-    const std::string bak = conf_ + ".skreeu1.bak";
-    run_cmd({"cp", "-f", conf_, bak}, 5000);
-    bool have_bak = access(bak.c_str(), R_OK) == 0;
-
     if (!existed) {
         std::string out = trim(run_cmd({wpa_cli_, "-i", iface_, "add_network"}, 5000));
         size_t nl = out.rfind('\n');
@@ -427,13 +534,11 @@ void Wifi::do_connect(std::string ssid, std::string password, bool sae) {
 
     if (!ok) {
         if (!existed) run_cmd({wpa_cli_, "-i", iface_, "remove_network", id}, 5000);
-        // 恢复连接前的配置文件，保证失败后还能回到原来的网络
-        if (have_bak) {
-            run_cmd({"cp", "-f", bak, conf_}, 5000);
-            run_cmd({wpa_cli_, "-i", iface_, "reconfigure"}, 8000);
-        } else if (!prev_id.empty() && prev_id != id) {
+        // 失败只回到原网络，不重载配置文件（reconfigure 有把服务弄挂的风险）
+        if (!prev_id.empty() && prev_id != id)
             run_cmd({wpa_cli_, "-i", iface_, "select_network", prev_id}, 5000);
-        }
+        else
+            run_cmd({wpa_cli_, "-i", iface_, "reconnect"}, 5000);
         {
             std::lock_guard<std::mutex> lk(snap_mu_);
             snap_.connecting = false;
@@ -446,7 +551,6 @@ void Wifi::do_connect(std::string ssid, std::string password, bool sae) {
 
     // 只有确认连上了才写盘，避免把旧配置写坏
     run_cmd({wpa_cli_, "-i", iface_, "save_config"}, 5000);
-    if (access(conf_.c_str(), R_OK) == 0) run_cmd({"cp", "-f", conf_, bak}, 5000);
     {
         std::lock_guard<std::mutex> lk(snap_mu_);
         snap_.connecting = false;
@@ -461,12 +565,12 @@ void Wifi::do_disconnect() {
 }
 
 void Wifi::do_reconnect() {
-    run_cmd({wpa_cli_, "-i", iface_, "reconfigure"}, 8000);
-    run_cmd({wpa_cli_, "-i", iface_, "reconnect"}, 5000);
-    do_status();
     WifiSnapshot s = snapshot();
     if (!s.available) {
-        std::lock_guard<std::mutex> lk(snap_mu_);
-        snap_.error = "Wi-Fi 服务未运行，请重启打印机";
+        do_service_restart(false);
+        return;
     }
+    run_cmd({wpa_cli_, "-i", iface_, "reconnect"}, 5000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));
+    do_status();
 }

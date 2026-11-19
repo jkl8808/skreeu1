@@ -81,6 +81,8 @@ std::string feed_title(const std::string& act, bool finished, bool failed, int t
 void feed_banner_set(bool error, bool success, const char* icon, const char* title,
                      const char* sub);
 void feed_tick(const PrinterState& s);
+void notice_show(bool error, bool success, const char* icon, const std::string& title,
+                 const std::string& sub, uint32_t duration_ms);
 void notice_error(const std::string& title, const std::string& sub);
 void open_net_page();
 void net_card_cb(lv_event_t* e);
@@ -114,6 +116,7 @@ std::string g_net_pw_ssid;
 bool g_net_pw_sae = false;
 std::string g_net_last_error;
 std::string g_net_target;
+bool g_wifi_restart_seen = false;
 
 uint32_t g_toast_until = 0;
 std::vector<std::string> g_brands;
@@ -2588,7 +2591,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.5.2 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.5.3 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）
@@ -2786,8 +2789,10 @@ void net_rebuild_list(const WifiSnapshot& s) {
 
 void net_refresh_ui(const WifiSnapshot& s) {
     if (R.net_status) {
-        if (!s.available) {
-            lv_label_set_text(R.net_status, "Wi-Fi 不可用");
+        if (s.restarting) {
+            lv_label_set_text(R.net_status, "正在重启 Wi-Fi 服务…");
+        } else if (!s.available) {
+            lv_label_set_text(R.net_status, "Wi-Fi 服务未运行");
         } else if (s.connecting) {
             lv_label_set_text(R.net_status, "正在连接…");
         } else if (s.connected) {
@@ -2800,8 +2805,10 @@ void net_refresh_ui(const WifiSnapshot& s) {
     }
     if (R.net_sub) {
         char buf[128];
-        if (!s.available) {
-            snprintf(buf, sizeof(buf), "Wi-Fi 服务未运行，请重启打印机");
+        if (s.restarting) {
+            snprintf(buf, sizeof(buf), "正在重新拉起 wpa_supplicant");
+        } else if (!s.available) {
+            snprintf(buf, sizeof(buf), "点「重启服务」尝试恢复");
         } else if (s.connecting) {
             snprintf(buf, sizeof(buf), "%s", g_net_target.empty() ? "请稍候" : g_net_target.c_str());
         } else if (s.connected) {
@@ -2813,8 +2820,14 @@ void net_refresh_ui(const WifiSnapshot& s) {
         lv_label_set_text(R.net_sub, buf);
     }
     if (R.net_scan_btn) {
-        if (s.scanning || s.connecting) lv_obj_add_state(R.net_scan_btn, LV_STATE_DISABLED);
-        else lv_obj_remove_state(R.net_scan_btn, LV_STATE_DISABLED);
+        if (s.scanning || s.connecting || !s.available)
+            lv_obj_add_state(R.net_scan_btn, LV_STATE_DISABLED);
+        else
+            lv_obj_remove_state(R.net_scan_btn, LV_STATE_DISABLED);
+    }
+    if (R.net_rec_btn) {
+        lv_obj_t* lb = lv_obj_get_child(R.net_rec_btn, 0);
+        if (lb) lv_label_set_text(lb, s.available ? "重连" : "重启服务");
     }
     if (R.net_dis_btn) {
         if (!s.connected) lv_obj_add_state(R.net_dis_btn, LV_STATE_DISABLED);
@@ -2845,8 +2858,14 @@ void net_disconnect_cb(lv_event_t*) {
 void net_reconnect_cb(lv_event_t*) {
     if (!WIFI) return;
     WifiSnapshot s = WIFI->snapshot();
+    if (s.restarting) {
+        show_toast("Wi-Fi 服务正在重启…");
+        return;
+    }
     if (!s.available) {
-        show_toast("Wi-Fi 服务未运行，请重启打印机");
+        WIFI->request_service_restart();
+        g_wifi_restart_seen = true;
+        notice_show(false, false, IC_WIFI, "正在重启 Wi-Fi 服务…", "正在重新拉起 wpa_supplicant", 0);
         return;
     }
     WIFI->request_reconnect();
@@ -3408,7 +3427,8 @@ void ui_tick() {
         WifiSnapshot w = WIFI->snapshot();
         if (R.net_line) {
             char buf[128];
-            if (!w.available) snprintf(buf, sizeof(buf), "Wi-Fi 不可用");
+            if (w.restarting) snprintf(buf, sizeof(buf), "Wi-Fi 重启中…");
+            else if (!w.available) snprintf(buf, sizeof(buf), "Wi-Fi 服务未运行");
             else if (w.connected)
                 snprintf(buf, sizeof(buf), "%s%s%s", w.ssid.c_str(),
                          w.ip.empty() ? "" : " · ", w.ip.c_str());
@@ -3420,6 +3440,17 @@ void ui_tick() {
             g_net_last_error = w.error;
         } else if (w.error.empty()) {
             g_net_last_error.clear();
+        }
+        if (w.restarting && !g_wifi_restart_seen) {
+            g_wifi_restart_seen = true;
+            notice_show(false, false, IC_WIFI, "正在重启 Wi-Fi 服务…", "请稍候", 0);
+        } else if (!w.restarting && g_wifi_restart_seen) {
+            g_wifi_restart_seen = false;
+            if (w.available)
+                notice_show(false, true, IC_CHECK_CIRCLE, "Wi-Fi 已恢复",
+                            w.ssid.empty() ? "服务已重新启动" : w.ssid, 3000);
+            else
+                notice_error("Wi-Fi 恢复失败", "请检查路由器或重启打印机");
         }
         if (g_net_open) net_refresh_ui(w);
     }

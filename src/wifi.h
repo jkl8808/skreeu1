@@ -22,6 +22,7 @@ struct WifiSnapshot {
     bool connected = false;   // wpa_state=COMPLETED
     bool scanning = false;
     bool connecting = false;
+    bool restarting = false;  // 正在重启 wpa_supplicant
     std::string ssid;
     std::string ip;
     std::string state;
@@ -46,6 +47,7 @@ public:
     void request_connect(const std::string& ssid, const std::string& password, bool sae);
     void request_disconnect();
     void request_reconnect();
+    void request_service_restart();
 
     WifiSnapshot snapshot();
 
@@ -57,11 +59,17 @@ private:
     void do_connect(std::string ssid, std::string password, bool sae);
     void do_disconnect();
     void do_reconnect();
+    void do_service_restart(bool force);
+    void log(const std::string& msg);
 
     std::string iface_;
     std::string wpa_cli_;
+    std::string wpa_sup_;
     std::string conf_;
     bool mock_ = false;
+    bool device_ = false;
+    long unavailable_since_ = 0;
+    long last_restart_ = 0;
 
     std::thread worker_;
     std::mutex mu_;
@@ -72,6 +80,7 @@ private:
     std::atomic<bool> status_busy_{false};
     std::atomic<bool> scan_busy_{false};
     std::atomic<bool> connect_busy_{false};
+    std::atomic<bool> restart_busy_{false};
 
     std::mutex snap_mu_;
     WifiSnapshot snap_;

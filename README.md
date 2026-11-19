@@ -218,7 +218,10 @@ DRM 显示控制器保持打开。
 - 点开放网络直接连接；点加密网络弹出密码键盘（支持大小写/符号，密码不回显）
 - 已连接的网络会高亮并打勾，底部可以「扫描」或「断开」
 - 连接状态、IP、RSSI 每 3 秒刷新，失败会弹提示
-- 「重连」按钮会重新加载配置并重连，适合 Wi-Fi 掉线后恢复
+- 「重连」按钮会重连；如果 `wpa_supplicant` 已经不在了，按钮变成「重启服务」，
+  会重新拉起服务，不用整机重启
+- 看门狗：服务消失超过 10 秒自动重启一次（60 秒冷却），日志在
+  `/userdata/logs/skreeu1-wifi.log`
 
 实现上直接调用打印机自带的 `wpa_cli` / `wpa_supplicant`（和原厂 GUI 同一套配置，
 `/home/lava/printer_data/gui/wpa_supplicant.conf`），DHCP 继续由系统的 `dhcpcd` 处理。
@@ -283,6 +286,8 @@ third_party/    nlohmann/json
 - 打印机必须处于 LAN 模式，Snapmaker Orca 才能直接连上。
 - 只在 U1 / 固件 2.1.0 上验证过；其他固件版本的对象名和命令可能不同。
 - Wi-Fi 面板暂不支持手动输入隐藏 SSID，也没有做 Wi-Fi 射频开关（只做连接/断开）。
+- 看门狗依赖 `wpa_supplicant` 二进制和原厂 `/home/lava/printer_data/gui/wpa_supplicant.conf`；
+  文件缺失时只会提示，不会乱猜配置。
 - 连接新网络会改写 `wpa_supplicant.conf` 里的保存网络，和原厂 GUI 的行为一致。
 - 界面固定按 480×320 设计，没有做其他分辨率适配。
 
