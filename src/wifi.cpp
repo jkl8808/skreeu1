@@ -405,8 +405,9 @@ void Wifi::do_connect(std::string ssid, std::string password, bool sae) {
     run_cmd({wpa_cli_, "-i", iface_, "select_network", id}, 5000);
 
     bool ok = false;
+    bool associated = false;
     std::string ip;
-    for (int i = 0; i < 40; i++) {   // 最多等 20 秒
+    for (int i = 0; i < 60; i++) {   // 最多等 30 秒（含 DHCP）
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         do_status();
         WifiSnapshot s;
@@ -414,10 +415,13 @@ void Wifi::do_connect(std::string ssid, std::string password, bool sae) {
             std::lock_guard<std::mutex> lk(snap_mu_);
             s = snap_;
         }
-        if (s.connected) {
+        if (s.connected) associated = true;
+        // 必须真的拿到 IP 才算成功：有些 AP 能关联但不发 DHCP，
+        // 这时候如果保存配置，打印机就会从这个网络里失联。
+        if (s.connected && !s.ip.empty()) {
             ok = true;
             ip = s.ip;
-            if (!ip.empty()) break;
+            break;
         }
     }
 
@@ -433,7 +437,8 @@ void Wifi::do_connect(std::string ssid, std::string password, bool sae) {
         {
             std::lock_guard<std::mutex> lk(snap_mu_);
             snap_.connecting = false;
-            snap_.error = "连接失败：密码错误或信号太弱";
+            snap_.error = associated ? "已连上但没拿到 IP（DHCP 失败），已恢复原网络"
+                                     : "连接失败：密码错误或信号太弱";
         }
         do_status();
         return;

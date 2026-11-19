@@ -1133,7 +1133,7 @@ void build_temp_page(lv_obj_t* screen) {
 
     lv_obj_t* track = mk_obj(sl);
     lv_obj_set_size(track, 36, LV_PCT(100));
-    lv_obj_set_style_radius(track, 10, 0);
+    lv_obj_set_style_radius(track, 18, 0);
     lv_obj_set_style_bg_color(track, theme::c(theme::SURFACE), 0);
     lv_obj_set_style_bg_opa(track, LV_OPA_COVER, 0);
     lv_obj_align(track, LV_ALIGN_CENTER, 0, 0);
@@ -1141,7 +1141,7 @@ void build_temp_page(lv_obj_t* screen) {
 
     R.tp_fill = mk_obj(sl);
     lv_obj_set_size(R.tp_fill, 36, 0);
-    lv_obj_set_style_radius(R.tp_fill, 10, 0);
+    lv_obj_set_style_radius(R.tp_fill, 18, 0);
     lv_obj_set_style_bg_color(R.tp_fill, theme::c(theme::PRIMARY), 0);
     lv_obj_set_style_bg_opa(R.tp_fill, LV_OPA_COVER, 0);
     lv_obj_align(R.tp_fill, LV_ALIGN_BOTTOM_MID, 0, 0);
@@ -1149,7 +1149,7 @@ void build_temp_page(lv_obj_t* screen) {
 
     R.tp_knob = mk_obj(sl);
     lv_obj_set_size(R.tp_knob, 56, 16);
-    lv_obj_set_style_radius(R.tp_knob, 6, 0);
+    lv_obj_set_style_radius(R.tp_knob, 8, 0);
     lv_obj_set_style_bg_color(R.tp_knob, theme::c(0xFFFFFF), 0);
     lv_obj_set_style_bg_opa(R.tp_knob, LV_OPA_COVER, 0);
     lv_obj_set_style_shadow_width(R.tp_knob, 8, 0);
@@ -2495,7 +2495,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.4.0 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.4.1 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）

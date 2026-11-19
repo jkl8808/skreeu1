@@ -221,8 +221,9 @@ DRM 显示控制器保持打开。
 实现上直接调用打印机自带的 `wpa_cli` / `wpa_supplicant`（和原厂 GUI 同一套配置，
 `/home/lava/printer_data/gui/wpa_supplicant.conf`），DHCP 继续由系统的 `dhcpcd` 处理。
 
-连接新网络前会先备份配置，**只有确认连上才写盘**；失败时会恢复备份并
+连接新网络前会先备份配置，**只有确认连上并且拿到 IP 才写盘**；失败时会恢复备份并
 `reconfigure`，保证不会把原来的网络写坏、重启后还能自动连回去。
+（有些 AP 能关联但不发 DHCP，这种情况也会按失败处理。）
 WPA3-SAE 会自动识别；过渡模式（WPA2-PSK+SAE）用 WPA2-PSK 连接。
 接口默认 `wlan0`，可用 `SKREEU1_WIFI_IF` 覆盖。
 
