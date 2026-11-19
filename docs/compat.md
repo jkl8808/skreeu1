@@ -62,6 +62,7 @@ filament_motion_sensor e0_filament .. e3_filament
 | 载入耗材 | `AUTO_FEEDING EXTRUDER=<0..3>` |
 | 退料 | `AUTO_FEEDING EXTRUDER=<0..3> UNLOAD=1 STAGE=prepare` 然后 `STAGE=doing` |
 | 更换耗材 | `SET_PRINT_FILAMENT_CONFIG CONFIG_EXTRUDER=<0..3> VENDOR=… FILAMENT_TYPE=… FILAMENT_SUBTYPE=… [FILAMENT_COLOR_RGBA=RRGGBBAA]` |
+| 腔体灯开关 | `SET_LED LED=cavity_led WHITE=0|1`；状态读 `led cavity_led.color_data`（首页顶部「灯光」） |
 | Wi-Fi 扫描/连接 | `wpa_cli -i wlan0 scan` / `scan_results` / `list_networks` / `add_network` / `set_network` / `select_network` / `save_config` / `disconnect`（配置由 `dhcpcd` 处理地址） |
 
 约束（固件里写死的）：

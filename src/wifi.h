@@ -45,6 +45,7 @@ public:
     void request_scan();
     void request_connect(const std::string& ssid, const std::string& password, bool sae);
     void request_disconnect();
+    void request_reconnect();
 
     WifiSnapshot snapshot();
 
@@ -55,9 +56,11 @@ private:
     void do_scan();
     void do_connect(std::string ssid, std::string password, bool sae);
     void do_disconnect();
+    void do_reconnect();
 
     std::string iface_;
     std::string wpa_cli_;
+    std::string conf_;
     bool mock_ = false;
 
     std::thread worker_;

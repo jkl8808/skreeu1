@@ -151,6 +151,9 @@ Wifi::Wifi() {
     const char* iface = getenv("SKREEU1_WIFI_IF");
     iface_ = iface && *iface ? iface : "wlan0";
     wpa_cli_ = find_wpa_cli();
+    const char* conf = getenv("SKREEU1_WPA_CONF");
+    conf_ = conf && *conf ? conf
+                          : "/home/lava/printer_data/gui/wpa_supplicant.conf";
     mock_ = getenv("SKREEU1_WIFI_MOCK") != nullptr;
 
     if (mock_) {
@@ -252,6 +255,11 @@ void Wifi::request_connect(const std::string& ssid, const std::string& password,
 void Wifi::request_disconnect() {
     if (mock_) return;
     enqueue([this] { do_disconnect(); });
+}
+
+void Wifi::request_reconnect() {
+    if (mock_) return;
+    enqueue([this] { do_reconnect(); });
 }
 
 WifiSnapshot Wifi::snapshot() {
@@ -365,6 +373,10 @@ void Wifi::do_connect(std::string ssid, std::string password, bool sae) {
             existed = true;
         }
     }
+    const std::string bak = conf_ + ".skreeu1.bak";
+    run_cmd({"cp", "-f", conf_, bak}, 5000);
+    bool have_bak = access(bak.c_str(), R_OK) == 0;
+
     if (!existed) {
         std::string out = trim(run_cmd({wpa_cli_, "-i", iface_, "add_network"}, 5000));
         size_t nl = out.rfind('\n');
@@ -391,7 +403,6 @@ void Wifi::do_connect(std::string ssid, std::string password, bool sae) {
     run_cmd({wpa_cli_, "-i", iface_, "set_network", id, "scan_ssid", "1"}, 5000);
     run_cmd({wpa_cli_, "-i", iface_, "enable_network", id}, 5000);
     run_cmd({wpa_cli_, "-i", iface_, "select_network", id}, 5000);
-    run_cmd({wpa_cli_, "-i", iface_, "save_config"}, 5000);
 
     bool ok = false;
     std::string ip;
@@ -411,19 +422,26 @@ void Wifi::do_connect(std::string ssid, std::string password, bool sae) {
     }
 
     if (!ok) {
-        if (!existed) {
-            run_cmd({wpa_cli_, "-i", iface_, "remove_network", id}, 5000);
-            run_cmd({wpa_cli_, "-i", iface_, "save_config"}, 5000);
-        }
-        // 连接失败时回到原来的网络，避免把远程访问彻底断开
-        if (!prev_id.empty() && prev_id != id)
+        if (!existed) run_cmd({wpa_cli_, "-i", iface_, "remove_network", id}, 5000);
+        // 恢复连接前的配置文件，保证失败后还能回到原来的网络
+        if (have_bak) {
+            run_cmd({"cp", "-f", bak, conf_}, 5000);
+            run_cmd({wpa_cli_, "-i", iface_, "reconfigure"}, 8000);
+        } else if (!prev_id.empty() && prev_id != id) {
             run_cmd({wpa_cli_, "-i", iface_, "select_network", prev_id}, 5000);
-        std::lock_guard<std::mutex> lk(snap_mu_);
-        snap_.connecting = false;
-        snap_.error = "连接失败：密码错误或信号太弱";
+        }
+        {
+            std::lock_guard<std::mutex> lk(snap_mu_);
+            snap_.connecting = false;
+            snap_.error = "连接失败：密码错误或信号太弱";
+        }
+        do_status();
         return;
     }
 
+    // 只有确认连上了才写盘，避免把旧配置写坏
+    run_cmd({wpa_cli_, "-i", iface_, "save_config"}, 5000);
+    if (access(conf_.c_str(), R_OK) == 0) run_cmd({"cp", "-f", conf_, bak}, 5000);
     {
         std::lock_guard<std::mutex> lk(snap_mu_);
         snap_.connecting = false;
@@ -435,4 +453,15 @@ void Wifi::do_connect(std::string ssid, std::string password, bool sae) {
 void Wifi::do_disconnect() {
     run_cmd({wpa_cli_, "-i", iface_, "disconnect"}, 5000);
     do_status();
+}
+
+void Wifi::do_reconnect() {
+    run_cmd({wpa_cli_, "-i", iface_, "reconfigure"}, 8000);
+    run_cmd({wpa_cli_, "-i", iface_, "reconnect"}, 5000);
+    do_status();
+    WifiSnapshot s = snapshot();
+    if (!s.available) {
+        std::lock_guard<std::mutex> lk(snap_mu_);
+        snap_.error = "Wi-Fi 服务未运行，请重启打印机";
+    }
 }

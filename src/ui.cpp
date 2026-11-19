@@ -75,8 +75,13 @@ const uint32_t kPalette[28] = {
 void update_sheet();
 void update_nozzle_page();
 void show_toast(const char* msg);
+void light_toggle_cb(lv_event_t* e);
 void open_net_page();
 void net_card_cb(lv_event_t* e);
+
+bool g_light_pending = false;
+bool g_light_val = false;
+uint32_t g_light_at = 0;
 
 Wifi* WIFI = nullptr;
 bool g_net_open = false;
@@ -228,6 +233,11 @@ struct Refs {
     lv_obj_t* def_group_sw[4] = {nullptr, nullptr, nullptr, nullptr};
     lv_obj_t* def_seg[2] = {nullptr, nullptr};
 
+    // 首页灯光
+    lv_obj_t* home_light = nullptr;
+    lv_obj_t* home_light_icon = nullptr;
+    lv_obj_t* home_light_text = nullptr;
+
     // 网络
     lv_obj_t* net_line = nullptr;
     lv_obj_t* net_page = nullptr;
@@ -235,6 +245,7 @@ struct Refs {
     lv_obj_t* net_sub = nullptr;
     lv_obj_t* net_list = nullptr;
     lv_obj_t* net_scan_btn = nullptr;
+    lv_obj_t* net_rec_btn = nullptr;
     lv_obj_t* net_dis_btn = nullptr;
     lv_obj_t* net_pw_page = nullptr;
     lv_obj_t* net_pw_title = nullptr;
@@ -787,6 +798,31 @@ void show_toast(const char* msg) {
     lv_obj_remove_flag(R.toast, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_to_index(R.toast, -1);
     g_toast_until = lv_tick_get() + 2600;
+}
+
+void apply_light_ui(bool on) {
+    if (!R.home_light) return;
+    lv_obj_set_style_bg_color(R.home_light,
+                              theme::c(on ? theme::PRIMARY_DIM : theme::SURFACE_HI), 0);
+    if (R.home_light_icon)
+        lv_obj_set_style_text_color(R.home_light_icon,
+                                    theme::c(on ? theme::PRIMARY : theme::MUTED), 0);
+    if (R.home_light_text)
+        lv_obj_set_style_text_color(R.home_light_text,
+                                    theme::c(on ? theme::TEXT : theme::MUTED), 0);
+}
+
+void light_toggle_cb(lv_event_t*) {
+    if (!MR) return;
+    PrinterState s = MR->snapshot();
+    bool cur = g_light_pending ? g_light_val : s.light_on;
+    bool want = !cur;
+    g_light_pending = true;
+    g_light_val = want;
+    g_light_at = lv_tick_get();
+    MR->send_gcode(want ? "SET_LED LED=cavity_led WHITE=1"
+                        : "SET_LED LED=cavity_led WHITE=0");
+    apply_light_ui(want);
 }
 
 void save_presets() {
@@ -2111,6 +2147,24 @@ void build_home(lv_obj_t* p) {
                           LV_FLEX_ALIGN_CENTER);
     mk_label(head, "Snapmaker U1", 20, true, theme::TEXT);
 
+    lv_obj_t* lb = lv_button_create(head);
+    lv_obj_set_size(lb, LV_SIZE_CONTENT, 26);
+    lv_obj_set_style_radius(lb, 999, 0);
+    lv_obj_set_style_bg_color(lb, theme::c(theme::SURFACE_HI), 0);
+    lv_obj_set_style_bg_opa(lb, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(lb, 0, 0);
+    lv_obj_set_style_shadow_width(lb, 0, 0);
+    lv_obj_set_style_pad_hor(lb, 8, 0);
+    lv_obj_set_style_pad_ver(lb, 2, 0);
+    lv_obj_set_flex_flow(lb, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(lb, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(lb, 4, 0);
+    R.home_light_icon = mk_icon(lb, IC_LIGHT, 15, theme::MUTED);
+    R.home_light_text = mk_label(lb, "灯光", 12, false, theme::MUTED);
+    lv_obj_add_event_cb(lb, light_toggle_cb, LV_EVENT_CLICKED, nullptr);
+    R.home_light = lb;
+
     lv_obj_t* chip = mk_obj(head);
     lv_obj_set_size(chip, LV_SIZE_CONTENT, 28);
     lv_obj_set_style_bg_color(chip, theme::c(theme::SURFACE_HI), 0);
@@ -2441,7 +2495,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.3.0 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.4.0 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）
@@ -2654,7 +2708,7 @@ void net_refresh_ui(const WifiSnapshot& s) {
     if (R.net_sub) {
         char buf[128];
         if (!s.available) {
-            snprintf(buf, sizeof(buf), "找不到 wpa_supplicant");
+            snprintf(buf, sizeof(buf), "Wi-Fi 服务未运行，请重启打印机");
         } else if (s.connecting) {
             snprintf(buf, sizeof(buf), "%s", g_net_target.empty() ? "请稍候" : g_net_target.c_str());
         } else if (s.connected) {
@@ -2693,6 +2747,17 @@ void net_refresh_cb(lv_event_t*) {
 void net_disconnect_cb(lv_event_t*) {
     if (WIFI) WIFI->request_disconnect();
     show_toast("已断开 Wi-Fi");
+}
+
+void net_reconnect_cb(lv_event_t*) {
+    if (!WIFI) return;
+    WifiSnapshot s = WIFI->snapshot();
+    if (!s.available) {
+        show_toast("Wi-Fi 服务未运行，请重启打印机");
+        return;
+    }
+    WIFI->request_reconnect();
+    show_toast("正在重新连接…");
 }
 
 void open_net_page() {
@@ -2749,8 +2814,9 @@ void build_net_page(lv_obj_t* screen) {
     lv_obj_set_flex_flow(ft, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_column(ft, 8, 0);
     R.net_scan_btn = mk_button(ft, "扫描", false, net_refresh_cb, nullptr, 38);
+    R.net_rec_btn = mk_button(ft, "重连", false, net_reconnect_cb, nullptr, 38);
     R.net_dis_btn = mk_button(ft, "断开", false, net_disconnect_cb, nullptr, 38);
-    for (lv_obj_t* b : {R.net_scan_btn, R.net_dis_btn}) {
+    for (lv_obj_t* b : {R.net_scan_btn, R.net_rec_btn, R.net_dis_btn}) {
         lv_obj_set_style_bg_color(b, theme::c(theme::SURFACE), 0);
         lv_obj_set_style_border_width(b, 1, 0);
         lv_obj_set_style_border_color(b, theme::c(theme::OUTLINE), 0);
@@ -3116,6 +3182,18 @@ void ui_tick() {
         }
         lv_label_set_text(R.bed_target, buf);
     }
+    bool light = s.light_on;
+    if (g_light_pending) {
+        if (s.light_on == g_light_val) {
+            g_light_pending = false;
+        } else if (lv_tick_get() - g_light_at > 8000) {
+            g_light_pending = false;
+            show_toast("灯光状态未确认，已恢复");
+        } else {
+            light = g_light_val;
+        }
+    }
+    apply_light_ui(light);
     update_sheet();
     update_temp_page();
     update_nozzle_page();

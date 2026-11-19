@@ -224,7 +224,8 @@ void Moonraker::poll_once() {
                       "&filament_motion_sensor%20e0_filament"
                       "&filament_motion_sensor%20e1_filament"
                       "&filament_motion_sensor%20e2_filament"
-                      "&filament_motion_sensor%20e3_filament";
+                      "&filament_motion_sensor%20e3_filament"
+                      "&led%20cavity_led";
 
     PrinterState next;
     if (!http_get(url, body)) {
@@ -302,6 +303,19 @@ void Moonraker::poll_once() {
             next.defect_nozzle = group_on("nozzle");
             if (d.contains("clean_bed") && d["clean_bed"].is_object())
                 next.defect_sens = d["clean_bed"].value("sensitivity", "low");
+        }
+
+        if (st.contains("led cavity_led") && st["led cavity_led"].is_object()) {
+            const json& l = st["led cavity_led"];
+            if (l.contains("color_data") && l["color_data"].is_array() &&
+                !l["color_data"].empty() && l["color_data"][0].is_array()) {
+                for (const auto& c : l["color_data"][0]) {
+                    if (c.is_number() && c.get<double>() > 0.01) {
+                        next.light_on = true;
+                        break;
+                    }
+                }
+            }
         }
 
         if (st.contains("gcode_move") && st["gcode_move"].is_object()) {

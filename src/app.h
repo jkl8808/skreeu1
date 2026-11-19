@@ -62,6 +62,7 @@ struct PrinterState {
     ToolState tools[4];
     double bed_temp = 0;
     double bed_target = 0;
+    bool light_on = false;   // led cavity_led
 
     // purifier (Snapmaker U1)
     bool purifier_present = false;

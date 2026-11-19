@@ -24,6 +24,7 @@ It talks to Moonraker directly and keeps the stock services (unisrv / MQTT) runn
 - 所有写操作都是**乐观更新**：先用本地值显示，轮询确认不上就 8 秒后弹提示并回退
 - 空闲 5 分钟自动熄屏（只关背光、保持显示输出），触摸一下立即亮起，不会误点界面
 - Wi-Fi 管理：扫描、连接（WPA2/WPA3/开放网络）、断开，显示 SSID / IP / 信号强度
+- 首页顶部「灯光」开关，直接控制腔体灯（`led cavity_led`），状态从打印机读取
 - 中文用 FreeType 运行时渲染，不预烘焙字库；整屏强制重绘约 2ms/帧，空闲 CPU ≈1%
 
 ## 截图
@@ -215,9 +216,13 @@ DRM 显示控制器保持打开。
 - 点开放网络直接连接；点加密网络弹出密码键盘（支持大小写/符号，密码不回显）
 - 已连接的网络会高亮并打勾，底部可以「扫描」或「断开」
 - 连接状态、IP、RSSI 每 3 秒刷新，失败会弹提示
+- 「重连」按钮会重新加载配置并重连，适合 Wi-Fi 掉线后恢复
 
 实现上直接调用打印机自带的 `wpa_cli` / `wpa_supplicant`（和原厂 GUI 同一套配置，
 `/home/lava/printer_data/gui/wpa_supplicant.conf`），DHCP 继续由系统的 `dhcpcd` 处理。
+
+连接新网络前会先备份配置，**只有确认连上才写盘**；失败时会恢复备份并
+`reconfigure`，保证不会把原来的网络写坏、重启后还能自动连回去。
 WPA3-SAE 会自动识别；过渡模式（WPA2-PSK+SAE）用 WPA2-PSK 连接。
 接口默认 `wlan0`，可用 `SKREEU1_WIFI_IF` 覆盖。
 
