@@ -164,6 +164,10 @@ void Moonraker::stop() {
     if (cmd_thread_.joinable()) cmd_thread_.join();
 }
 
+bool Moonraker::take_command_error() {
+    return cmd_error_.exchange(false);
+}
+
 PrinterState Moonraker::snapshot() {
     std::lock_guard<std::mutex> lock(mu_);
     return st_;
@@ -202,7 +206,7 @@ void Moonraker::send_loop() {
                           "/printer/gcode/script?script=" + (esc ? esc : "");
         curl_free(esc);
         std::string body;
-        http_post(url, body);
+        if (!http_post(url, body)) cmd_error_ = true;
         curl_easy_cleanup(curl);
     }
 }

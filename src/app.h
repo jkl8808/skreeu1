@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -149,6 +150,7 @@ public:
 
     PrinterState snapshot();
     bool send_gcode(const std::string& script);
+    bool take_command_error();
     const Config& config() const { return cfg_; }
 
 private:
@@ -166,6 +168,7 @@ private:
     std::condition_variable cmd_cv_;
     std::deque<std::string> cmd_queue_;
     bool cmd_quit_ = false;
+    std::atomic<bool> cmd_error_{false};
     std::mutex mu_;
     PrinterState st_;
     bool running_ = false;

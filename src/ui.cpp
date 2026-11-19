@@ -81,6 +81,7 @@ std::string feed_title(const std::string& act, bool finished, bool failed, int t
 void feed_banner_set(bool error, bool success, const char* icon, const char* title,
                      const char* sub);
 void feed_tick(const PrinterState& s);
+void notice_error(const std::string& title, const std::string& sub);
 void open_net_page();
 void net_card_cb(lv_event_t* e);
 
@@ -94,7 +95,7 @@ bool g_feed_was_active = false;
 int g_feed_active_tool = 0;
 std::string g_feed_active_state;
 uint32_t g_feed_done_until = 0;
-uint32_t g_feed_error_until = 0;
+uint32_t g_notice_until = 0;   // 顶部通知的显示截止时间（0 表示由 feed 持续占用）
 std::string g_feed_err_seen;
 
 bool g_light_pending = false;
@@ -123,7 +124,7 @@ void nozzle_view(double& nd, bool& hf) {
     bool confirmed = (g_nz_dia <= 0 || fabs(nd - g_nz_dia) < 0.01) &&
                      (g_nz_flow < 0 || hf == (g_nz_flow == 1));
     if (confirmed || lv_tick_get() - g_nz_at > 8000) {
-        if (!confirmed) show_toast("喷嘴参数未生效，已恢复");
+        if (!confirmed) notice_error("喷嘴参数未生效", "已恢复原来的设置");
         g_nz_dia = -1;
         g_nz_flow = -1;
         g_nz_at = 0;
@@ -680,6 +681,11 @@ void set_swatch(lv_obj_t* o, const FilamentInfo& f) {
 
 int g_temp_kind = 0;   // 0 = 喷嘴, 1 = 热床
 int g_slider_max = 300;
+bool g_temp_pending = false;
+int g_temp_pending_kind = 0;
+int g_temp_pending_tool = -1;
+int g_temp_pending_val = 0;
+uint32_t g_temp_pending_at = 0;
 
 void temp_apply(int temp) {
     if (!MR) return;
@@ -690,6 +696,13 @@ void temp_apply(int temp) {
         snprintf(buf, sizeof(buf), "M104 S%d", temp);
     } else {
         snprintf(buf, sizeof(buf), "M104 T%d S%d", g_sheet_tool, temp);
+    }
+    if (!MR->config().read_only) {
+        g_temp_pending = true;
+        g_temp_pending_kind = g_temp_kind;
+        g_temp_pending_tool = g_sheet_tool;
+        g_temp_pending_val = temp;
+        g_temp_pending_at = lv_tick_get();
     }
     MR->send_gcode(buf);
 }
@@ -2071,7 +2084,7 @@ void update_sheet() {
             g_fil_pending = false;
         } else if (lv_tick_get() - g_fil_at > 8000) {
             g_fil_pending = false;
-            show_toast("耗材修改未生效，已恢复");
+            notice_error("耗材修改未生效", "已恢复原来的耗材");
         }
     }
     if (g_fil_pending) {
@@ -2160,7 +2173,7 @@ void update_sheet() {
             g_feed_at = 0;  // 已经同步
         } else if (lv_tick_get() - g_feed_at > 8000) {
             g_feed_at = 0;  // 超时，恢复真实值
-            show_toast("预进料开关未生效，已恢复");
+            notice_error("预进料开关未生效", "已恢复");
         } else {
             auto_mode = g_feed_pending;  // 消抖：先保持本地状态
         }
@@ -2575,7 +2588,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.5.1 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.5.2 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）
@@ -3049,11 +3062,27 @@ void feed_banner_set(bool error, bool success, const char* icon, const char* tit
 
 void feed_banner_hide() {
     if (R.feed_banner) lv_obj_add_flag(R.feed_banner, LV_OBJ_FLAG_HIDDEN);
+    g_notice_until = 0;
+}
+
+// 顶部通知是全局标准提示：进料状态、操作失败都走这里
+void notice_show(bool error, bool success, const char* icon, const std::string& title,
+                 const std::string& sub, uint32_t duration_ms) {
+    feed_banner_set(error, success, icon, title.c_str(), sub.c_str());
+    g_notice_until = duration_ms ? lv_tick_get() + duration_ms : 0;
+}
+
+void notice_error(const std::string& title, const std::string& sub) {
+    notice_show(true, false, IC_CLOSE, title, sub, 5000);
 }
 
 void feed_tick(const PrinterState& s) {
     if (!R.feed_banner) return;
     uint32_t now = lv_tick_get();
+    if (g_notice_until) {
+        if ((int32_t)(g_notice_until - now) > 0) return;
+        g_notice_until = 0;
+    }
     int active = -1;
     int err = -1;
     std::string astate, estate;
@@ -3082,21 +3111,20 @@ void feed_tick(const PrinterState& s) {
             g_feed_err_seen = key;
             std::string act = feed_action(astate);
             std::string title = feed_title(act, false, true, err);
-            feed_banner_set(true, false, IC_CLOSE, title.c_str(), estate.c_str());
-            g_feed_error_until = now + 6000;
+            notice_show(true, false, IC_CLOSE, title, estate, 6000);
             g_feed_was_active = false;
             g_feed_local = false;
         }
     } else {
         g_feed_err_seen.clear();
     }
-    if (g_feed_error_until && now < g_feed_error_until) return;
+    if (g_notice_until && (int32_t)(g_notice_until - now) > 0) return;
 
     if (active >= 0) {
         std::string act = feed_action(astate);
-        feed_banner_set(false, false, act == "unload" ? IC_UNLOAD : IC_LOAD,
-                        feed_title(act, false, false, active).c_str(),
-                        feed_state_text(astate).c_str());
+        notice_show(false, false, act == "unload" ? IC_UNLOAD : IC_LOAD,
+                    feed_title(act, false, false, active),
+                    feed_state_text(astate), 0);
         g_feed_was_active = true;
         g_feed_active_tool = active;
         g_feed_active_state = astate;
@@ -3108,10 +3136,10 @@ void feed_tick(const PrinterState& s) {
     if (g_feed_was_active) {
         bool failed = g_feed_active_state.find("fail") != std::string::npos;
         std::string act = feed_action(g_feed_active_state);
-        feed_banner_set(failed, !failed,
-                        failed ? IC_CLOSE : IC_CHECK_CIRCLE,
-                        feed_title(act, true, failed, g_feed_active_tool).c_str(),
-                        failed ? "检查耗材和喷嘴" : "完成");
+        notice_show(failed, !failed,
+                    failed ? IC_CLOSE : IC_CHECK_CIRCLE,
+                    feed_title(act, true, failed, g_feed_active_tool),
+                    failed ? "检查耗材和喷嘴" : "完成", failed ? 6000 : 2200);
         g_feed_done_until = now + (failed ? 6000 : 2200);
         g_feed_was_active = false;
         g_feed_pref_tool = -1;
@@ -3123,9 +3151,9 @@ void feed_tick(const PrinterState& s) {
     if (g_feed_local) {
         if (now - g_feed_local_at < 15000) {
             std::string act = g_feed_local_kind == 2 ? "unload" : "load";
-            feed_banner_set(false, false, act == "unload" ? IC_UNLOAD : IC_LOAD,
-                            feed_title(act, false, false, g_feed_local_tool).c_str(),
-                            "等待打印机…");
+            notice_show(false, false, act == "unload" ? IC_UNLOAD : IC_LOAD,
+                        feed_title(act, false, false, g_feed_local_tool),
+                        "等待打印机…", 0);
             return;
         }
         g_feed_local = false;
@@ -3388,7 +3416,7 @@ void ui_tick() {
             lv_label_set_text(R.net_line, buf);
         }
         if (!w.error.empty() && w.error != g_net_last_error) {
-            show_toast(w.error.c_str());
+            notice_error("Wi-Fi 操作失败", w.error);
             g_net_last_error = w.error;
         } else if (w.error.empty()) {
             g_net_last_error.clear();
@@ -3520,12 +3548,25 @@ void ui_tick() {
             g_light_pending = false;
         } else if (lv_tick_get() - g_light_at > 8000) {
             g_light_pending = false;
-            show_toast("灯光状态未确认，已恢复");
+            notice_error("灯光状态未确认", "已恢复");
         } else {
             light = g_light_val;
         }
     }
     apply_light_ui(light);
+    if (g_temp_pending) {
+        double actual = g_temp_pending_kind == 1
+                            ? s.bed_target
+                            : (g_temp_pending_tool >= 0 ? s.tools[g_temp_pending_tool].target : 0);
+        if (fabs(actual - (double)g_temp_pending_val) < 1.0) {
+            g_temp_pending = false;
+        } else if (lv_tick_get() - g_temp_pending_at > 8000) {
+            g_temp_pending = false;
+            notice_error("温度设置未生效", "已恢复目标温度");
+        }
+    }
+    if (MR->take_command_error())
+        notice_error("命令发送失败", "检查打印机连接");
     for (int i = 0; i < 4; i++) {
         const FeedChannel& fc = s.feed[i];
         int fm = 0;
