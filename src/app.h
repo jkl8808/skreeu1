@@ -1,8 +1,11 @@
 #pragma once
 
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 struct ToolState {
@@ -155,8 +158,14 @@ private:
     void poll_gui_config();
     void load_product_info();
     void load_materials();
+    void send_loop();
 
     Config cfg_;
+    std::thread cmd_thread_;
+    std::mutex cmd_mu_;
+    std::condition_variable cmd_cv_;
+    std::deque<std::string> cmd_queue_;
+    bool cmd_quit_ = false;
     std::mutex mu_;
     PrinterState st_;
     bool running_ = false;

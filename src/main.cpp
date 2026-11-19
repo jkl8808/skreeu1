@@ -248,6 +248,8 @@ int main(int argc, char** argv) {
                 g_next_sleep_at = lv_tick_get() + g_screen_timeout_ms;
             g_touch_read_cb = lv_indev_get_read_cb(indev);
             if (g_touch_read_cb) lv_indev_set_read_cb(indev, touch_read_cb);
+            // 触摸采样比刷新更快，点击不用等 33ms 的刷新周期
+            if (lv_timer_t* rt = lv_indev_get_read_timer(indev)) lv_timer_set_period(rt, 10);
         }
 #else
         disp = lv_sdl_window_create(SCREEN_W, SCREEN_H);

@@ -151,10 +151,17 @@ void Moonraker::load_materials() {
 void Moonraker::start() {
     running_ = true;
     std::thread([this] { loop(); }).detach();
+    cmd_thread_ = std::thread([this] { send_loop(); });
 }
 
 void Moonraker::stop() {
     running_ = false;
+    {
+        std::lock_guard<std::mutex> lk(cmd_mu_);
+        cmd_quit_ = true;
+    }
+    cmd_cv_.notify_all();
+    if (cmd_thread_.joinable()) cmd_thread_.join();
 }
 
 PrinterState Moonraker::snapshot() {
@@ -164,16 +171,40 @@ PrinterState Moonraker::snapshot() {
 
 bool Moonraker::send_gcode(const std::string& script) {
     if (cfg_.read_only) return false;
-    CURL* curl = curl_easy_init();
-    if (!curl) return false;
-    char* esc = curl_easy_escape(curl, script.c_str(), (int)script.size());
-    std::string url = "http://" + cfg_.host + ":" + std::to_string(cfg_.port) +
-                      "/printer/gcode/script?script=" + (esc ? esc : "");
-    curl_free(esc);
-    std::string body;
-    bool ok = http_post(url, body);
-    curl_easy_cleanup(curl);
-    return ok;
+    {
+        std::lock_guard<std::mutex> lk(cmd_mu_);
+        if (cmd_quit_) return false;
+        cmd_queue_.push_back(script);
+    }
+    cmd_cv_.notify_one();
+    return true;   // 入队即返回，真正的 HTTP 请求在后台线程做
+}
+
+// 后台串行发送 G-code：避免 SET_PRINT_FILAMENT_CONFIG 这类慢命令
+// 把 LVGL 主线程卡住（选耗材要等 1 秒才响应就是它导致的）。
+void Moonraker::send_loop() {
+    for (;;) {
+        std::string script;
+        {
+            std::unique_lock<std::mutex> lk(cmd_mu_);
+            cmd_cv_.wait(lk, [this] { return cmd_quit_ || !cmd_queue_.empty(); });
+            if (cmd_queue_.empty()) {
+                if (cmd_quit_) return;
+                continue;
+            }
+            script = std::move(cmd_queue_.front());
+            cmd_queue_.pop_front();
+        }
+        CURL* curl = curl_easy_init();
+        if (!curl) continue;
+        char* esc = curl_easy_escape(curl, script.c_str(), (int)script.size());
+        std::string url = "http://" + cfg_.host + ":" + std::to_string(cfg_.port) +
+                          "/printer/gcode/script?script=" + (esc ? esc : "");
+        curl_free(esc);
+        std::string body;
+        http_post(url, body);
+        curl_easy_cleanup(curl);
+    }
 }
 
 void Moonraker::poll_history() {
