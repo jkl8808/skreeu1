@@ -507,9 +507,10 @@ void send_feed(bool on) {
     if (g_sheet_tool < 0 || g_sheet_tool > 3) return;
     g_feed_pending = on;
     g_feed_at = lv_tick_get();
-    char buf[80];
-    snprintf(buf, sizeof(buf), "FEED_AUTO MODULE=%s CHANNEL=%d AUTO=%d",
-             g_sheet_tool < 2 ? "left" : "right", g_sheet_tool % 2, on ? 1 : 0);
+    // 和原厂 GUI 一致：由固件按 EXTRUDER 自己映射 left/right 和 channel
+    char buf[64];
+    snprintf(buf, sizeof(buf), "AUTO_FEEDING EXTRUDER=%d AUTO=%d",
+             g_sheet_tool, on ? 1 : 0);
     send_action(buf);
 }
 
@@ -1401,7 +1402,7 @@ void update_nozzle_page() {
 
 void load_filament_cb(lv_event_t*) {
     if (!MR || g_sheet_tool < 0) return;
-    MR->send_gcode("AUTO_FEEDING EXTRUDER=" + std::to_string(g_sheet_tool));
+    MR->send_gcode("AUTO_FEEDING EXTRUDER=" + std::to_string(g_sheet_tool) + " LOAD=1");
 }
 
 void unload_filament_cb(lv_event_t*) {
@@ -2498,7 +2499,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.4.2 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.4.3 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）

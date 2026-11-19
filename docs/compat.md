@@ -51,7 +51,7 @@ filament_motion_sensor e0_filament .. e3_filament
 | 打印偏好开关 | `SET_PRINT_PREFERENCES BED_LEVEL=… FLOW_CALIBRATE=… SHAPER_CALIBRATE=… TIME_LAPSE_CAMERA=…` |
 | 自动续料 / 忽略颜色 / 结束关灯 | `SET_PRINT_PREFERENCES AUTO_REPLENISH_FILAMENT=… REPLENISH_IGNORE_COLOR=… END_LED_TURN_OFF=…` |
 | 空打检测 | `SET_PRINT_PREFERENCES FILAMENT_ENTANGLE_DETECT=0|1 FILAMENT_ENTANGLE_SEN=low|medium|high` |
-| 自动进料 T1–T4 | `FEED_AUTO MODULE=left|right CHANNEL=0|1 AUTO=0|1`（在喷嘴详情页，按当前喷嘴） |
+| 自动进料 T1–T4 | `AUTO_FEEDING EXTRUDER=<0..3> AUTO=0|1`（在喷嘴详情页，按当前喷嘴） |
 | 异物检测 | `DEFECT_DETECTION_CONFIG MAIN_ENABLE=… CLEAN_BED_ENABLE=… NOODLE_ENABLE=… RESIDUE_ENABLE=… NOZZLE_ENABLE=… SENSITIVITY=low|high` |
 | 净化器风速 | `SET_PURIFIER FAN=inner SPEED=0..100` |
 | 净化器模式 | `SET_PURIFIER_MODE MODE=0..3`（待机/降温/预热/保温） |
@@ -59,7 +59,7 @@ filament_motion_sensor e0_filament .. e3_filament
 | 喷嘴温度 | `M104 S<temp>`（T1）/ `M104 T<n> S<temp>`（T2–T4） |
 | 热床温度 | `M140 S<temp>`（首页热床卡 → 调温浮层，滑块上限 120°C） |
 | 快捷温度 | UI 本地配置：喷嘴 `skreeu1_temps.cfg`（`SKREEU1_TEMPS`），热床 `skreeu1_bed_temps.cfg`（`SKREEU1_BED_TEMPS`），各自 6 个 |
-| 载入耗材 | `AUTO_FEEDING EXTRUDER=<0..3>` |
+| 载入耗材 | `AUTO_FEEDING EXTRUDER=<0..3> LOAD=1` |
 | 退料 | `AUTO_FEEDING EXTRUDER=<0..3> UNLOAD=1 STAGE=prepare` 然后 `STAGE=doing` |
 | 更换耗材 | `SET_PRINT_FILAMENT_CONFIG CONFIG_EXTRUDER=<0..3> VENDOR=… FILAMENT_TYPE=… FILAMENT_SUBTYPE=… [FILAMENT_COLOR_RGBA=RRGGBBAA]` |
 | 腔体灯开关 | `SET_LED LED=cavity_led WHITE=0|1`；状态读 `led cavity_led.color_data`（首页顶部「灯光」） |
