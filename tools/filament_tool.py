@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-u1ui 自定义耗材小工具
+skreeu1 自定义耗材小工具
 
-给打印机（u1ui）添加自定义品牌 / 类型，并把某个喷嘴设成这卷耗材；
+给打印机（skreeu1）添加自定义品牌 / 类型，并把某个喷嘴设成这卷耗材；
 可选同时在 Snapmaker Orca 的用户目录里生成对应的切片预设。
 
 用法：
@@ -14,10 +14,10 @@ u1ui 自定义耗材小工具
   python3 tools/filament_tool.py            # 交互模式
 
 连接参数（环境变量或参数）：
-  U1UI_HOST       打印机地址（必填，或用 --host）
-  U1UI_SSH_USER   SSH 用户，默认 root
-  U1UI_SSH_PASS   SSH 密码（不填则运行时提示输入）
-  U1UI_PORT       Moonraker 端口，默认 7125
+  SKREEU1_HOST       打印机地址（必填，或用 --host）
+  SKREEU1_SSH_USER   SSH 用户，默认 root
+  SKREEU1_SSH_PASS   SSH 密码（不填则运行时提示输入）
+  SKREEU1_PORT       Moonraker 端口，默认 7125
 
 依赖：本机 ssh（密码通过 SSH_ASKPASS 传入）、Python 3.8+。
 """
@@ -35,8 +35,8 @@ import tempfile
 import urllib.parse
 import urllib.request
 
-BRANDS_PATH = "/userdata/u1ui/u1ui_brands.cfg"
-TYPES_PATH = "/userdata/u1ui/u1ui_types.cfg"
+BRANDS_PATH = "/userdata/skreeu1/skreeu1_brands.cfg"
+TYPES_PATH = "/userdata/skreeu1/skreeu1_types.cfg"
 
 DEFAULT_BRANDS = [
     "generic", "Snapmaker", "Polymaker", "eSun", "SUNLU", "Bambu Lab",
@@ -71,16 +71,16 @@ class Ssh:
 
     def _askpass(self) -> str:
         if self._tmp is None:
-            self._tmp = tempfile.mkdtemp(prefix="u1ui-askpass-")
+            self._tmp = tempfile.mkdtemp(prefix="skreeu1-askpass-")
             path = os.path.join(self._tmp, "askpass.sh")
             with open(path, "w") as f:
-                f.write('#!/bin/sh\nprintf \'%s\\n\' "$U1UI_SSH_PASS"\n')
+                f.write('#!/bin/sh\nprintf \'%s\\n\' "$SKREEU1_SSH_PASS"\n')
             os.chmod(path, 0o700)
         return os.path.join(self._tmp, "askpass.sh")
 
     def run(self, remote_cmd: str, stdin: str = "") -> str:
         env = os.environ.copy()
-        env["U1UI_SSH_PASS"] = self.password
+        env["SKREEU1_SSH_PASS"] = self.password
         env["SSH_ASKPASS"] = self._askpass()
         env["SSH_ASKPASS_REQUIRE"] = "force"
         env.pop("DISPLAY", None)
@@ -392,11 +392,11 @@ def interactive(args):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="给 u1ui 打印机添加自定义耗材")
-    ap.add_argument("--host", default=os.environ.get("U1UI_HOST"))
-    ap.add_argument("--port", type=int, default=int(os.environ.get("U1UI_PORT", "7125")))
-    ap.add_argument("--ssh-user", default=os.environ.get("U1UI_SSH_USER", "root"))
-    ap.add_argument("--ssh-pass", default=os.environ.get("U1UI_SSH_PASS"))
+    ap = argparse.ArgumentParser(description="给 skreeu1 打印机添加自定义耗材")
+    ap.add_argument("--host", default=os.environ.get("SKREEU1_HOST"))
+    ap.add_argument("--port", type=int, default=int(os.environ.get("SKREEU1_PORT", "7125")))
+    ap.add_argument("--ssh-user", default=os.environ.get("SKREEU1_SSH_USER", "root"))
+    ap.add_argument("--ssh-pass", default=os.environ.get("SKREEU1_SSH_PASS"))
     sub = ap.add_subparsers(dest="cmd")
 
     p = sub.add_parser("list", help="列出现有品牌/类型和喷嘴耗材")
@@ -435,7 +435,7 @@ def main():
 
     args = ap.parse_args()
     if not args.host:
-        die("请用 --host 或环境变量 U1UI_HOST 指定打印机地址")
+        die("请用 --host 或环境变量 SKREEU1_HOST 指定打印机地址")
     if not args.ssh_pass:
         args.ssh_pass = getpass.getpass(f"{args.ssh_user}@{args.host} 的 SSH 密码: ")
     if not getattr(args, "cmd", None):

@@ -1,5 +1,5 @@
 #!/bin/bash
-# 启动 Xvfb + x11vnc + u1ui
+# 启动 Xvfb + x11vnc + skreeu1
 #   VNC_DISPLAY=:99  VNC_PORT=5900  （默认）
 set -e
 DISP="${VNC_DISPLAY:-:99}"
@@ -11,4 +11,4 @@ sleep 1
 x11vnc -display "$DISP" -forever -shared -nopw -rfbport "$PORT" -quiet >/tmp/x11vnc.log 2>&1 &
 sleep 1
 export DISPLAY="$DISP"
-exec ./build/u1ui "$@"
+exec ./build/skreeu1 "$@"

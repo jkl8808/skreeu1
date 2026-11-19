@@ -48,7 +48,7 @@ uint32_t g_nz_at = 0;
 std::string g_pick_brand = "generic";
 uint32_t g_pick_color = 0xFFFFFF;
 std::vector<MaterialOption> g_mat_view;  // 当前品牌下可选的耗材
-std::vector<MaterialOption> g_custom_mats;  // 自定义类型（u1ui_types.cfg）
+std::vector<MaterialOption> g_custom_mats;  // 自定义类型（skreeu1_types.cfg）
 
 // 乐观更新：刚改完耗材时先用本地值显示，别等轮询
 bool g_fil_pending = false;
@@ -622,7 +622,7 @@ void temp_apply(int temp) {
 lv_obj_t* mk_overlay(lv_obj_t* screen);
 lv_obj_t* mk_close_button(lv_obj_t* parent, lv_event_cb_t cb);
 
-// 自定义快捷温度：所有喷嘴共用，持久化到工作目录下的 u1ui_temps.cfg
+// 自定义快捷温度：所有喷嘴共用，持久化到工作目录下的 skreeu1_temps.cfg
 int g_presets[6] = {180, 200, 220, 240, 260, 280};
 int g_bed_presets[6] = {60, 70, 80, 90, 100, 110};
 int g_edit_slot = -1;          // >=0：数字键盘正在编辑该快捷温度
@@ -633,22 +633,22 @@ int g_keypad_val = 0;
 bool g_keypad_fresh = true;
 
 const char* preset_path() {
-    const char* p = getenv("U1UI_TEMPS");
+    const char* p = getenv("SKREEU1_TEMPS");
     if (p) return p;
-#ifdef U1UI_DEVICE
-    return "/userdata/u1ui/u1ui_temps.cfg";
+#ifdef SKREEU1_DEVICE
+    return "/userdata/skreeu1/skreeu1_temps.cfg";
 #else
-    return "u1ui_temps.cfg";
+    return "skreeu1_temps.cfg";
 #endif
 }
 
 const char* bed_preset_path() {
-    const char* p = getenv("U1UI_BED_TEMPS");
+    const char* p = getenv("SKREEU1_BED_TEMPS");
     if (p) return p;
-#ifdef U1UI_DEVICE
-    return "/userdata/u1ui/u1ui_bed_temps.cfg";
+#ifdef SKREEU1_DEVICE
+    return "/userdata/skreeu1/skreeu1_bed_temps.cfg";
 #else
-    return "u1ui_bed_temps.cfg";
+    return "skreeu1_bed_temps.cfg";
 #endif
 }
 
@@ -681,11 +681,11 @@ void load_presets() {
 // 自定义品牌列表：每行一个品牌名，文件不存在时用内置常用品牌
 void load_brands() {
     g_brands.clear();
-    const char* p = getenv("U1UI_BRANDS");
-#ifdef U1UI_DEVICE
-    if (!p) p = "/userdata/u1ui/u1ui_brands.cfg";
+    const char* p = getenv("SKREEU1_BRANDS");
+#ifdef SKREEU1_DEVICE
+    if (!p) p = "/userdata/skreeu1/skreeu1_brands.cfg";
 #else
-    if (!p) p = "u1ui_brands.cfg";
+    if (!p) p = "skreeu1_brands.cfg";
 #endif
     FILE* f = fopen(p, "r");
     if (f) {
@@ -708,11 +708,11 @@ void load_brands() {
 // 自定义类型列表：每行 "TYPE" 或 "TYPE SUBTYPE"，'#' 开头为注释
 void load_custom_materials() {
     g_custom_mats.clear();
-    const char* p = getenv("U1UI_TYPES");
-#ifdef U1UI_DEVICE
-    if (!p) p = "/userdata/u1ui/u1ui_types.cfg";
+    const char* p = getenv("SKREEU1_TYPES");
+#ifdef SKREEU1_DEVICE
+    if (!p) p = "/userdata/skreeu1/skreeu1_types.cfg";
 #else
-    if (!p) p = "u1ui_types.cfg";
+    if (!p) p = "skreeu1_types.cfg";
 #endif
     FILE* f = fopen(p, "r");
     if (!f) return;
@@ -997,7 +997,7 @@ lv_obj_t* mk_key_icon(lv_obj_t* parent, const char* icon, lv_event_cb_t cb, void
 }
 
 void build_temp_page(lv_obj_t* screen) {
-    const char* rail_env = getenv("U1UI_RAIL");
+    const char* rail_env = getenv("SKREEU1_RAIL");
     const bool rail_right = rail_env && std::string(rail_env) == "right";
 
     // 半透明遮罩：点空白处关闭
@@ -1119,7 +1119,7 @@ void build_temp_page(lv_obj_t* screen) {
 }
 
 void build_keypad(lv_obj_t* screen) {
-    const char* rail_env = getenv("U1UI_RAIL");
+    const char* rail_env = getenv("SKREEU1_RAIL");
     const bool rail_right = rail_env && std::string(rail_env) == "right";
 
     // 键盘自己再压一层遮罩：层次 = 详情页 < 调温浮层 < 数字键盘
@@ -1237,7 +1237,7 @@ void open_nozzle_cb(lv_event_t*) {
 }
 
 void build_nozzle_page(lv_obj_t* screen) {
-    const char* rail_env = getenv("U1UI_RAIL");
+    const char* rail_env = getenv("SKREEU1_RAIL");
     const bool rail_right = rail_env && std::string(rail_env) == "right";
 
     lv_obj_t* scrim = mk_obj(screen);
@@ -1477,7 +1477,7 @@ void open_color_page() {
 void color_card_cb(lv_event_t*) { open_color_page(); }
 
 void build_color_page(lv_obj_t* screen) {
-    const char* rail_env = getenv("U1UI_RAIL");
+    const char* rail_env = getenv("SKREEU1_RAIL");
     const bool rail_right = rail_env && std::string(rail_env) == "right";
 
     lv_obj_t* scrim = mk_obj(screen);
@@ -1547,7 +1547,7 @@ void filament_card_cb(lv_event_t*) {
 lv_obj_t* mk_overlay(lv_obj_t* screen) {
     lv_obj_t* o = mk_obj(screen);
     lv_obj_set_size(o, 392, 304);
-    const char* rail_env = getenv("U1UI_RAIL");
+    const char* rail_env = getenv("SKREEU1_RAIL");
     const bool rail_right = rail_env && std::string(rail_env) == "right";
     lv_obj_align(o, LV_ALIGN_LEFT_MID, rail_right ? 8 : 80, 0);
     lv_obj_set_style_bg_color(o, theme::c(theme::SURFACE_HI), 0);
@@ -2399,7 +2399,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "U1UI 1.0.0 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.1.0 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）
@@ -2481,7 +2481,7 @@ void ui_init(Moonraker* mr, lv_obj_t* screen) {
     lv_obj_set_style_bg_color(screen, theme::c(theme::BG), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
 
-    const char* rail_env = getenv("U1UI_RAIL");
+    const char* rail_env = getenv("SKREEU1_RAIL");
     const bool rail_right = rail_env && std::string(rail_env) == "right";
 
     lv_obj_t* content = mk_obj(screen);

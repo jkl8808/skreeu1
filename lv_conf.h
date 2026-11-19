@@ -27,8 +27,8 @@
  *====================*/
 
 /** Color depth: 1 (I1), 8 (L8), 16 (RGB565), 24 (RGB888), 32 (XRGB8888) */
-/* U1UI_DEVICE=1 时对齐 U1 面板的 32bpp framebuffer，桌面模拟器仍用 16 位 */
-#ifdef U1UI_DEVICE
+/* SKREEU1_DEVICE=1 时对齐 U1 面板的 32bpp framebuffer，桌面模拟器仍用 16 位 */
+#ifdef SKREEU1_DEVICE
     #define LV_COLOR_DEPTH 32
 #else
     #define LV_COLOR_DEPTH 16
@@ -224,7 +224,7 @@
     #endif
 
     /* aarch64 上 NEON 是基线，软件渲染直接用它 */
-    #ifdef U1UI_DEVICE
+    #ifdef SKREEU1_DEVICE
         #define  LV_USE_DRAW_SW_ASM     LV_DRAW_SW_ASM_NEON
     #else
         #define  LV_USE_DRAW_SW_ASM     LV_DRAW_SW_ASM_NONE
@@ -433,7 +433,7 @@
 
     /** - 1: Print log with 'printf';
      *  - 0: User needs to register a callback with `lv_log_register_print_cb()`. */
-    #ifdef U1UI_DEVICE
+    #ifdef SKREEU1_DEVICE
         #define LV_LOG_PRINTF 1
     #else
         #define LV_LOG_PRINTF 0
@@ -1223,7 +1223,7 @@
  *==================*/
 
 /** Use SDL to open window on PC and handle mouse and keyboard. */
-#ifdef U1UI_DEVICE
+#ifdef SKREEU1_DEVICE
     #define LV_USE_SDL 0
 #else
     #define LV_USE_SDL 1
@@ -1260,7 +1260,7 @@
 #endif
 
 /** Driver for /dev/fb */
-#ifdef U1UI_DEVICE
+#ifdef SKREEU1_DEVICE
     #define LV_USE_LINUX_FBDEV      1
 #else
     #define LV_USE_LINUX_FBDEV      0
@@ -1340,7 +1340,7 @@
 #endif /*LV_USE_LOVYAN_GFX*/
 
 /** Driver for evdev input devices */
-#ifdef U1UI_DEVICE
+#ifdef SKREEU1_DEVICE
     #define LV_USE_EVDEV    1
 #else
     #define LV_USE_EVDEV    0

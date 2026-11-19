@@ -1,7 +1,7 @@
 # 桌面开发镜像（SDL2 模拟器）
 #
-#   docker build -t u1ui-dev:1 -f docker/Dockerfile.dev .
-#   docker run --rm --network host -v $PWD:/src -w /src u1ui-dev:1 \
+#   docker build -t skreeu1-dev:1 -f docker/Dockerfile.dev .
+#   docker run --rm --network host -v $PWD:/src -w /src skreeu1-dev:1 \
 #     bash -c 'cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j'
 FROM ubuntu:24.04
 

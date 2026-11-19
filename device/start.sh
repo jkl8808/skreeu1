@@ -1,19 +1,19 @@
 #!/bin/sh
-# 让 u1ui 接管屏幕，同时保留 lmd / unisrv / MQTT / Moonraker 等官方服务。
+# 让 skreeu1 接管屏幕，同时保留 lmd / unisrv / MQTT / Moonraker 等官方服务。
 #
 # 原理：lmd 固定 fork /usr/bin/gui。先让 lmd 正常启动（原厂 GUI），
-# 再把 u1ui 只读 bind 到 /usr/bin/gui，杀掉当前 gui 子进程，lmd 会用 u1ui 重启它。
+# 再把 skreeu1 只读 bind 到 /usr/bin/gui，杀掉当前 gui 子进程，lmd 会用 skreeu1 重启它。
 # 这样官方 App / 切片软件依赖的 unisrv、3893 MQTT、7125 Moonraker 都还在。
 #
 # 用法（在打印机上）：
-#   /userdata/u1ui/start.sh
-#   U1UI_READONLY=1 /userdata/u1ui/start.sh   # 只读模式（环境变量会被 lmd 继承）
+#   /userdata/skreeu1/start.sh
+#   SKREEU1_READONLY=1 /userdata/skreeu1/start.sh   # 只读模式（环境变量会被 lmd 继承）
 #
-# 恢复原厂界面：/userdata/u1ui/stop.sh
+# 恢复原厂界面：/userdata/skreeu1/stop.sh
 set -e
 
 GUI=/usr/bin/gui
-BIN=/userdata/u1ui/u1ui
+BIN=/userdata/skreeu1/skreeu1
 CFG=/oem/printer_data/config/extended/extended2.cfg
 
 [ -x "$BIN" ] || { echo "missing $BIN"; exit 1; }
@@ -36,8 +36,8 @@ fi
 /etc/init.d/S90lmd start >/dev/null 2>&1 || true
 sleep 8
 
-# 4) 换上 u1ui，让 lmd 重启 GUI 子进程
+# 4) 换上 skreeu1，让 lmd 重启 GUI 子进程
 mount -o ro --bind "$BIN" "$GUI" || { echo "bind $BIN -> $GUI failed"; exit 1; }
 killall gui 2>/dev/null || true
 sleep 2
-echo "u1ui started as lmd GUI; official services (unisrv/MQTT/Moonraker) are running"
+echo "skreeu1 started as lmd GUI; official services (unisrv/MQTT/Moonraker) are running"

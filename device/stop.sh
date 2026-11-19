@@ -1,7 +1,7 @@
 #!/bin/sh
-# 停掉 u1ui，恢复原厂屏幕 GUI（lmd / unisrv 一直保持运行）。
+# 停掉 skreeu1，恢复原厂屏幕 GUI（lmd / unisrv 一直保持运行）。
 #
-# 用法（在打印机上）：/userdata/u1ui/stop.sh
+# 用法（在打印机上）：/userdata/skreeu1/stop.sh
 set -e
 
 GUI=/usr/bin/gui

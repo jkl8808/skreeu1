@@ -1,7 +1,7 @@
-# U1UI 交叉编译工具链（aarch64 / Snapmaker U1）
+# SKREEU1 交叉编译工具链（aarch64 / Snapmaker U1）
 #
-#   docker build -t u1ui-cross:1 -f docker/Dockerfile.cross .
-#   docker run --rm -v $PWD:/src -w /src u1ui-cross:1
+#   docker build -t skreeu1-cross:1 -f docker/Dockerfile.cross .
+#   docker run --rm -v $PWD:/src -w /src skreeu1-cross:1
 #
 # 目标机是 Buildroot，glibc 2.38；这里用 Ubuntu 22.04（glibc 2.35）保证符号兼容。
 # 链接用的 .so 直接从打印机上拷到 sysroot/（libfreetype.so.6 / libpng16.so.16 /

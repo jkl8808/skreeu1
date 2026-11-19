@@ -7,10 +7,10 @@
 /sysroot/lib/*.so*
 
 # 运行时生成的配置
-/u1ui_temps.cfg
-/u1ui_bed_temps.cfg
-/u1ui_brands.cfg
-/u1ui_types.cfg
+/skreeu1_temps.cfg
+/skreeu1_bed_temps.cfg
+/skreeu1_brands.cfg
+/skreeu1_types.cfg
 
 # Python
 __pycache__/

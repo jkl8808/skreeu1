@@ -3,6 +3,6 @@
 set -e
 PAGE="${1:-0}"
 OUT="${2:-/shots/page.png}"
-HOST="${3:-${U1UI_HOST:-127.0.0.1}}"
+HOST="${3:-${SKREEU1_HOST:-127.0.0.1}}"
 PORT="${4:-7125}"
-exec ./build/u1ui --shot "$OUT" --page "$PAGE" --host "$HOST" --port "$PORT"
+exec ./build/skreeu1 --shot "$OUT" --page "$PAGE" --host "$HOST" --port "$PORT"

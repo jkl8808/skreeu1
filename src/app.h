@@ -36,7 +36,7 @@ struct MaterialOption {
     std::string sub;     // SnapSpeed（generic 表示无子类型）
     std::string vendor;  // Snapmaker / generic
     bool soft = false;
-    bool custom = false; // 来自 u1ui_types.cfg 的自定义类型
+    bool custom = false; // 来自 skreeu1_types.cfg 的自定义类型
 };
 
 // Snapmaker 自动进料模块（Klipper `filament_feed left/right`）的一个通道
@@ -123,10 +123,10 @@ struct PrinterState {
 };
 
 struct Config {
-#ifdef U1UI_DEVICE
+#ifdef SKREEU1_DEVICE
     // 设备上由 lmd 直接拉起，没有命令行参数，所以默认值要能直接连本机
     std::string host = "127.0.0.1";
-    std::string font_dir = "/userdata/u1ui/assets/fonts";
+    std::string font_dir = "/userdata/skreeu1/assets/fonts";
 #else
     std::string host = "127.0.0.1";
     std::string font_dir = "assets/fonts";

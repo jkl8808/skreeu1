@@ -13,7 +13,7 @@
 #include <thread>
 #include <unistd.h>
 
-#if U1UI_DEVICE
+#if SKREEU1_DEVICE
 #include "lv_evdev.h"
 #include "lv_linux_fbdev.h"
 #else
@@ -111,11 +111,11 @@ void parse_args(int argc, char** argv, Config& cfg, std::string& shot_path, int&
             cfg.font_dir = argv[++i];
         }
     }
-    if (const char* h = getenv("U1UI_HOST")) cfg.host = h;
-    if (const char* p = getenv("U1UI_PORT")) cfg.port = atoi(p);
-    if (const char* r = getenv("U1UI_READONLY")) cfg.read_only = (atoi(r) != 0);
-    if (const char* f = getenv("U1UI_FONTS")) cfg.font_dir = f;
-    if (const char* pi = getenv("U1UI_PRODUCT_INFO")) cfg.product_info = pi;
+    if (const char* h = getenv("SKREEU1_HOST")) cfg.host = h;
+    if (const char* p = getenv("SKREEU1_PORT")) cfg.port = atoi(p);
+    if (const char* r = getenv("SKREEU1_READONLY")) cfg.read_only = (atoi(r) != 0);
+    if (const char* f = getenv("SKREEU1_FONTS")) cfg.font_dir = f;
+    if (const char* pi = getenv("SKREEU1_PRODUCT_INFO")) cfg.product_info = pi;
 }
 
 } // namespace
@@ -151,9 +151,9 @@ int main(int argc, char** argv) {
                                LV_DISPLAY_RENDER_MODE_FULL);
         lv_display_set_flush_cb(disp, flush_headless);
     } else {
-#if U1UI_DEVICE
+#if SKREEU1_DEVICE
         // U1 面板：/dev/fb0 (rockchipdrmfb, 480x320x32) + tlsc6x 触摸在 event0
-        const char* fb = getenv("U1UI_FB");
+        const char* fb = getenv("SKREEU1_FB");
         if (!fb) fb = "/dev/fb0";
         disp = lv_linux_fbdev_create();
         if (disp) {
@@ -162,7 +162,7 @@ int main(int argc, char** argv) {
         } else {
             fprintf(stderr, "fbdev create failed\n");
         }
-        const char* touch = getenv("U1UI_TOUCH");
+        const char* touch = getenv("SKREEU1_TOUCH");
         if (!touch) touch = "/dev/input/event0";
         if (!lv_evdev_create(LV_INDEV_TYPE_POINTER, touch))
             fprintf(stderr, "touch open failed: %s\n", touch);

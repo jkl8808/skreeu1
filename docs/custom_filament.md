@@ -1,6 +1,6 @@
 # 自定义耗材：打印机侧 + 切片软件侧
 
-目标：让打印机（u1ui）里设置的品牌/类型/颜色，和 Snapmaker Orca 里的耗材预设对应起来，
+目标：让打印机（skreeu1）里设置的品牌/类型/颜色，和 Snapmaker Orca 里的耗材预设对应起来，
 这样设备页能看到真实耗材，切片列表里也能直接选到它。
 
 两边是**两套独立的数据**，靠字段约定对应：
@@ -17,11 +17,11 @@
 
 ---
 
-## 一、打印机侧（u1ui）
+## 一、打印机侧（skreeu1）
 
 ### 1. 加品牌
 
-文件：`/userdata/u1ui/u1ui_brands.cfg`，一行一个品牌：
+文件：`/userdata/skreeu1/skreeu1_brands.cfg`，一行一个品牌：
 
 ```
 generic
@@ -35,7 +35,7 @@ Kexcelled
 
 ### 2. 加类型/子类型
 
-文件：`/userdata/u1ui/u1ui_types.cfg`，一行一个，`TYPE` 或 `TYPE SUBTYPE`，
+文件：`/userdata/skreeu1/skreeu1_types.cfg`，一行一个，`TYPE` 或 `TYPE SUBTYPE`，
 `#` 开头为注释：
 
 ```
@@ -76,11 +76,11 @@ SET_PRINT_FILAMENT_CONFIG CONFIG_EXTRUDER=<n> \
 
 | 文件 | 内容 |
 | --- | --- |
-| `/userdata/u1ui/u1ui_brands.cfg` | 品牌列表 |
-| `/userdata/u1ui/u1ui_types.cfg` | 自定义类型列表 |
-| `/userdata/u1ui/u1ui_temps.cfg` | 6 个快捷温度（所有喷嘴共用） |
+| `/userdata/skreeu1/skreeu1_brands.cfg` | 品牌列表 |
+| `/userdata/skreeu1/skreeu1_types.cfg` | 自定义类型列表 |
+| `/userdata/skreeu1/skreeu1_temps.cfg` | 6 个快捷温度（所有喷嘴共用） |
 
-可用 `U1UI_BRANDS` / `U1UI_TYPES` / `U1UI_TEMPS` 覆盖路径。
+可用 `SKREEU1_BRANDS` / `SKREEU1_TYPES` / `SKREEU1_TEMPS` 覆盖路径。
 
 ---
 
@@ -151,7 +151,7 @@ SET_PRINT_FILAMENT_CONFIG CONFIG_EXTRUDER=<n> \
 `tools/filament_tool.py`（在电脑上跑，Python 3.8+，通过本机 `ssh` 连打印机）：
 
 ```bash
-export U1UI_HOST=192.168.1.50      # 打印机地址，也可以每次传 --host
+export SKREEU1_HOST=192.168.1.50      # 打印机地址，也可以每次传 --host
 
 # 看现状
 python3 tools/filament_tool.py list
@@ -169,18 +169,18 @@ python3 tools/filament_tool.py set --tool 2 --vendor Kexcelled --type ABS --sub 
 python3 tools/filament_tool.py
 ```
 
-- 品牌/类型写到打印机的 `/userdata/u1ui/u1ui_brands.cfg` / `u1ui_types.cfg`；
+- 品牌/类型写到打印机的 `/userdata/skreeu1/skreeu1_brands.cfg` / `skreeu1_types.cfg`；
 - `set` 直接走 Moonraker `SET_PRINT_FILAMENT_CONFIG`（自动跳过官方 RFID 槽）；
 - `--orca` 会写 `~/.config/Snapmaker_Orca/user/default/filament/` 下的用户预设，
   并按 0.2/0.4/0.6/0.8 自动找对应的 `Snapmaker <类型> @U1 <喷嘴> nozzle` 作为父预设；
 - 带空格的品牌（如 `Bambu Lab`）会自动加引号，避免 G-code 参数被空格截断。
 
-连接参数：`U1UI_HOST`（必填）/ `U1UI_PORT` / `U1UI_SSH_USER` / `U1UI_SSH_PASS`
+连接参数：`SKREEU1_HOST`（必填）/ `SKREEU1_PORT` / `SKREEU1_SSH_USER` / `SKREEU1_SSH_PASS`
 （密码不填会在运行时提示输入）。
 
 ## 四、一次完整的对接流程
 
-1. **打印机**：`u1ui_brands.cfg` 加品牌，`u1ui_types.cfg` 加 `ABS Basic`。
+1. **打印机**：`skreeu1_brands.cfg` 加品牌，`skreeu1_types.cfg` 加 `ABS Basic`。
 2. **打印机**：首页点喷嘴 → 选 Kexcelled → 选颜色 → 点 `ABS · Basic`。
 3. **电脑**：把 4 个用户预设 JSON 放进 Orca 的 `user/default/filament/`。
 4. **电脑**：重启 Orca，`Prepare` 里就能选到 `Kexcelled ABS Basic @U1 <喷嘴>`；
@@ -194,6 +194,6 @@ python3 tools/filament_tool.py
 | Orca 列表里看不到自定义耗材 | 缺 `filament_settings_id`、`from` 不是 `User`、或没重启 |
 | 设备页显示 Generic ABS | Orca 里没有对应厂商预设，回退到 Generic |
 | 打印机的品牌/类型改了，Orca 没变 | 同步是打印机→切片单向；且需要刷新/重连 |
-| 自定义类型没出现在 u1ui 列表 | `u1ui_types.cfg` 格式不对（一行 `TYPE` 或 `TYPE SUBTYPE`） |
-| 改完 u1ui 配置没生效 | 品牌/类型每次打开界面重读；快捷温度启动时读；必要时重启 u1ui |
+| 自定义类型没出现在 skreeu1 列表 | `skreeu1_types.cfg` 格式不对（一行 `TYPE` 或 `TYPE SUBTYPE`） |
+| 改完 skreeu1 配置没生效 | 品牌/类型每次打开界面重读；快捷温度启动时读；必要时重启 skreeu1 |
 | Orca 连不上打印机 | 打印机必须在 LAN 模式；账号登录只解决云端身份 |
