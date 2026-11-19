@@ -38,6 +38,7 @@ constexpr const char* IC_WIFI_OFF = "\U000F05AA";
 constexpr const char* IC_LOCK = "\U000F033E";
 constexpr const char* IC_REFRESH = "\U000F0450";
 constexpr const char* IC_CHECK_CIRCLE = "\U000F05E0";
+constexpr const char* IC_TOOLHEAD = "\U000F0E5B";  // printer-3d-nozzle
 constexpr const char* IC_CHEVRON_RIGHT = "\U000F0142";
 constexpr const char* IC_BACKSPACE = "\U000F0B5C";
 
@@ -76,8 +77,25 @@ void update_sheet();
 void update_nozzle_page();
 void show_toast(const char* msg);
 void light_toggle_cb(lv_event_t* e);
+std::string feed_title(const std::string& act, bool finished, bool failed, int tool);
+void feed_banner_set(bool error, bool success, const char* icon, const char* title,
+                     const char* sub);
+void feed_tick(const PrinterState& s);
 void open_net_page();
 void net_card_cb(lv_event_t* e);
+
+int g_nozzle_feed_mode[4] = {0, 0, 0, 0};  // 0 未进料 1 已进料 2 进料中 3 退料中 4 失败
+bool g_feed_local = false;
+int g_feed_local_tool = 0;
+int g_feed_local_kind = 0;   // 1=进料 2=退料
+int g_feed_pref_tool = -1;   // 本次操作对应的喷嘴，优先显示它的状态
+uint32_t g_feed_local_at = 0;
+bool g_feed_was_active = false;
+int g_feed_active_tool = 0;
+std::string g_feed_active_state;
+uint32_t g_feed_done_until = 0;
+uint32_t g_feed_error_until = 0;
+std::string g_feed_err_seen;
 
 bool g_light_pending = false;
 bool g_light_val = false;
@@ -132,6 +150,9 @@ struct Refs {
     lv_obj_t* nozzle_temp[4] = {nullptr, nullptr, nullptr, nullptr};
     lv_obj_t* nozzle_target[4] = {nullptr, nullptr, nullptr, nullptr};
     lv_obj_t* nozzle_mat[4] = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* nozzle_feed[4] = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* nozzle_feed_line[4] = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* nozzle_feed_head[4] = {nullptr, nullptr, nullptr, nullptr};
     lv_obj_t* nozzle_nfc[4] = {nullptr, nullptr, nullptr, nullptr};
 
     // 喷嘴详情面板
@@ -237,6 +258,13 @@ struct Refs {
     lv_obj_t* home_light = nullptr;
     lv_obj_t* home_light_icon = nullptr;
     lv_obj_t* home_light_text = nullptr;
+
+    // 进料/退料状态通知
+    lv_obj_t* feed_banner = nullptr;
+    lv_obj_t* feed_banner_icon = nullptr;
+    lv_obj_t* feed_banner_title = nullptr;
+    lv_obj_t* feed_banner_sub = nullptr;
+    lv_obj_t* feed_banner_spin = nullptr;
 
     // 网络
     lv_obj_t* net_line = nullptr;
@@ -1213,8 +1241,8 @@ void build_keypad(lv_obj_t* screen) {
     R.keypad_scrim = scrim;
 
     lv_obj_t* kp = mk_obj(screen);
-    lv_obj_set_size(kp, 300, 292);
-    lv_obj_align(kp, LV_ALIGN_CENTER, rail_right ? -36 : 36, 0);
+    lv_obj_set_size(kp, 300, 260);
+    lv_obj_align(kp, LV_ALIGN_BOTTOM_MID, rail_right ? -36 : 36, -8);
     lv_obj_set_style_bg_color(kp, theme::c(theme::SURFACE_HI), 0);
     lv_obj_set_style_bg_opa(kp, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(kp, 20, 0);
@@ -1403,6 +1431,15 @@ void update_nozzle_page() {
 void load_filament_cb(lv_event_t*) {
     if (!MR || g_sheet_tool < 0) return;
     MR->send_gcode("AUTO_FEEDING EXTRUDER=" + std::to_string(g_sheet_tool) + " LOAD=1");
+    g_feed_local = true;
+    g_feed_local_tool = g_sheet_tool;
+    g_feed_local_kind = 1;
+    g_feed_pref_tool = g_sheet_tool;
+    g_feed_local_at = lv_tick_get();
+    g_feed_was_active = false;
+    g_feed_done_until = 0;
+    feed_banner_set(false, false, IC_LOAD,
+                    feed_title("load", false, false, g_sheet_tool).c_str(), "等待打印机…");
 }
 
 void unload_filament_cb(lv_event_t*) {
@@ -1410,6 +1447,15 @@ void unload_filament_cb(lv_event_t*) {
     std::string n = std::to_string(g_sheet_tool);
     MR->send_gcode("AUTO_FEEDING EXTRUDER=" + n + " UNLOAD=1 STAGE=prepare\n" +
                    "AUTO_FEEDING EXTRUDER=" + n + " UNLOAD=1 STAGE=doing");
+    g_feed_local = true;
+    g_feed_local_tool = g_sheet_tool;
+    g_feed_local_kind = 2;
+    g_feed_pref_tool = g_sheet_tool;
+    g_feed_local_at = lv_tick_get();
+    g_feed_was_active = false;
+    g_feed_done_until = 0;
+    feed_banner_set(false, false, IC_UNLOAD,
+                    feed_title("unload", false, false, g_sheet_tool).c_str(), "等待打印机…");
 }
 
 void hide_sheets() {
@@ -1455,6 +1501,7 @@ void open_tool_sheet(int t) {
     if (R.color_scrim) lv_obj_add_flag(R.color_scrim, LV_OBJ_FLAG_HIDDEN);
     if (R.sheet) lv_obj_remove_flag(R.sheet, LV_OBJ_FLAG_HIDDEN);
     update_sheet();
+    if (MR) feed_tick(MR->snapshot());
 }
 
 void nozzle_card_cb(lv_event_t* e) {
@@ -1574,7 +1621,7 @@ void build_color_page(lv_obj_t* screen) {
     R.color_scrim = scrim;
 
     lv_obj_t* pg = mk_obj(screen);
-    lv_obj_set_size(pg, 330, 220);
+    lv_obj_set_size(pg, 330, 210);
     lv_obj_align(pg, LV_ALIGN_CENTER, rail_right ? -36 : 36, 0);
     lv_obj_set_style_bg_color(pg, theme::c(theme::SURFACE_HI), 0);
     lv_obj_set_style_bg_opa(pg, LV_OPA_COVER, 0);
@@ -1599,7 +1646,7 @@ void build_color_page(lv_obj_t* screen) {
     mk_close_button(head, close_color_cb);
 
     lv_obj_t* grid = mk_obj(pg);
-    lv_obj_set_size(grid, LV_PCT(100), 160);
+    lv_obj_set_size(grid, LV_PCT(100), 150);
     lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_START);
@@ -1805,7 +1852,7 @@ void build_tool_sheet(lv_obj_t* screen) {
     lv_obj_add_flag(feed, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(feed, feed_card_cb, LV_EVENT_CLICKED, nullptr);
 
-    mk_label(feed, "自动进料", 12, false, theme::TEXT);
+    mk_label(feed, "自动预进料", 12, false, theme::TEXT);
     R.sheet_feed_hint = mk_label(feed, "—", 10, false, theme::MUTED);
     lv_obj_set_flex_grow(R.sheet_feed_hint, 1);
     R.sheet_feed_sw = mk_switch(feed, false, sheet_feed_cb, nullptr);
@@ -2114,7 +2161,7 @@ void update_sheet() {
             g_feed_at = 0;  // 已经同步
         } else if (lv_tick_get() - g_feed_at > 8000) {
             g_feed_at = 0;  // 超时，恢复真实值
-            show_toast("自动进料切换失败，已恢复");
+            show_toast("预进料开关未生效，已恢复");
         } else {
             auto_mode = g_feed_pending;  // 消抖：先保持本地状态
         }
@@ -2286,10 +2333,40 @@ void build_home(lv_obj_t* p) {
         lv_obj_set_width(R.nozzle_target[i], LV_PCT(100));
         lv_label_set_long_mode(R.nozzle_target[i], LV_LABEL_LONG_MODE_DOTS);
 
-        R.nozzle_mat[i] = mk_label(card, "—", 12, false, theme::MUTED);
-        lv_obj_set_width(R.nozzle_mat[i], LV_PCT(100));
-        lv_obj_set_height(R.nozzle_mat[i], 16);
+        lv_obj_t* mrow = mk_obj(card);
+        lv_obj_set_size(mrow, LV_PCT(100), 20);
+        lv_obj_set_flex_flow(mrow, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(mrow, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                              LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_column(mrow, 3, 0);
+        R.nozzle_mat[i] = mk_label(mrow, "—", 12, false, theme::MUTED);
+        lv_obj_set_height(R.nozzle_mat[i], 20);
+        lv_obj_set_flex_grow(R.nozzle_mat[i], 1);
         lv_label_set_long_mode(R.nozzle_mat[i], LV_LABEL_LONG_MODE_DOTS);
+
+        // 工具头 + 耗材线：表示有没有进到挤出机
+        lv_obj_t* fi = mk_obj(mrow);
+        lv_obj_set_size(fi, 18, 20);
+        lv_obj_remove_flag(fi, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_t* line = mk_obj(fi);
+        lv_obj_set_size(line, 3, 4);
+        lv_obj_set_style_radius(line, 1, 0);
+        lv_obj_set_style_bg_color(line, theme::c(theme::MUTED), 0);
+        lv_obj_set_style_bg_opa(line, LV_OPA_COVER, 0);
+        lv_obj_align(line, LV_ALIGN_TOP_MID, 0, 0);
+        lv_obj_remove_flag(line, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_t* fh = mk_icon(fi, IC_TOOLHEAD, 14, theme::MUTED);
+        lv_obj_align(fh, LV_ALIGN_BOTTOM_MID, 0, 0);
+        R.nozzle_feed[i] = fi;
+        R.nozzle_feed_line[i] = line;
+        R.nozzle_feed_head[i] = fh;
+    }
+
+    // 热床卡宽度跟喷嘴卡对齐（4 等分会取整，所以布局后取实际宽度）
+    lv_obj_update_layout(p);
+    if (bed && R.nozzle_card[3]) {
+        lv_obj_set_width(bed, lv_obj_get_width(R.nozzle_card[3]));
+        lv_obj_update_layout(p);
     }
 }
 
@@ -2499,7 +2576,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.4.3 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.5.0 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）
@@ -2884,6 +2961,256 @@ void build_net_page(lv_obj_t* screen) {
     mk_button(pft, "连接", true, net_pw_connect_cb, nullptr, 34);
 }
 
+
+// ---------------------------------------------------------------- 进料/退料通知
+
+bool feed_state_active(const std::string& st) {
+    static const char* kActive[] = {
+        "preload_prepare", "preload_feeding",
+        "load_prepare", "load_homing", "load_picking", "load_heating",
+        "load_feeding", "load_extruding", "load_flushing",
+        "unload_prepare", "unload_homing", "unload_picking", "unload_heating",
+        "unload_heat_finish", "unload_doing",
+        "wait_insert",
+        "manual_sta_prepare", "manual_sta_homing", "manual_sta_picking",
+        "manual_sta_heating", "manual_sta_extruding", "manual_sta_flushing",
+    };
+    for (const char* a : kActive)
+        if (st == a) return true;
+    return false;
+}
+
+std::string feed_action(const std::string& st) {
+    if (st.rfind("unload", 0) == 0) return "unload";
+    if (st.rfind("load", 0) == 0) return "load";
+    if (st.rfind("preload", 0) == 0) return "preload";
+    if (st.rfind("manual", 0) == 0) return "manual";
+    if (st == "wait_insert") return "wait";
+    return "load";
+}
+
+std::string feed_state_text(const std::string& st) {
+    if (st == "load_prepare" || st == "unload_prepare" || st == "preload_prepare")
+        return "准备中";
+    if (st == "load_homing" || st == "unload_homing") return "移动到换料位";
+    if (st == "load_picking" || st == "unload_picking") return "切换喷嘴";
+    if (st == "load_heating" || st == "unload_heating") return "加热喷嘴";
+    if (st == "load_feeding" || st == "preload_feeding") return "送入耗材";
+    if (st == "load_extruding") return "挤出耗材";
+    if (st == "load_flushing") return "冲洗喷嘴";
+    if (st == "unload_heat_finish") return "等待退料";
+    if (st == "unload_doing") return "退出耗材";
+    if (st == "wait_insert") return "等待插入耗材";
+    if (st == "manual_sta_heating" || st == "manual_sta_extruding" ||
+        st == "manual_sta_flushing")
+        return "手动进料";
+    return st;
+}
+
+std::string feed_title(const std::string& act, bool finished, bool failed, int tool) {
+    std::string t = "T" + std::to_string(tool + 1) + " ";
+    if (failed) t += (act == "unload" ? "退料失败" : "进料失败");
+    else if (finished) t += (act == "unload" ? "退料完成" : "进料完成");
+    else if (act == "unload") t += "退料中";
+    else if (act == "preload") t += "预加载";
+    else if (act == "wait") t += "等待耗材";
+    else if (act == "manual") t += "手动进料";
+    else t += "进料中";
+    return t;
+}
+
+void feed_banner_set(bool error, bool success, const char* icon, const char* title,
+                     const char* sub) {
+    if (!R.feed_banner) return;
+    uint32_t bg = error ? 0x3A1F1F : (success ? theme::SUCCESS_DIM : theme::SURFACE_HI);
+    uint32_t fg = error ? theme::DANGER : (success ? theme::SUCCESS : theme::TEXT);
+    lv_obj_set_style_bg_color(R.feed_banner, theme::c(bg), 0);
+    lv_obj_set_style_border_color(R.feed_banner,
+                                  theme::c(error ? theme::DANGER : theme::OUTLINE), 0);
+    if (R.feed_banner_icon) {
+        lv_label_set_text(R.feed_banner_icon, icon);
+        lv_obj_set_style_text_color(R.feed_banner_icon, theme::c(fg), 0);
+    }
+    if (R.feed_banner_title) {
+        lv_label_set_text(R.feed_banner_title, title);
+        lv_obj_set_style_text_color(R.feed_banner_title, theme::c(fg), 0);
+    }
+    if (R.feed_banner_sub) {
+        lv_label_set_text(R.feed_banner_sub, sub);
+        lv_obj_set_style_text_color(R.feed_banner_sub,
+                                    theme::c(error ? theme::DANGER : theme::MUTED), 0);
+    }
+    if (R.feed_banner_spin) {
+        if (error || success) lv_obj_add_flag(R.feed_banner_spin, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_remove_flag(R.feed_banner_spin, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_remove_flag(R.feed_banner, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_to_index(R.feed_banner, -1);
+}
+
+void feed_banner_hide() {
+    if (R.feed_banner) lv_obj_add_flag(R.feed_banner, LV_OBJ_FLAG_HIDDEN);
+}
+
+void feed_tick(const PrinterState& s) {
+    if (!R.feed_banner) return;
+    uint32_t now = lv_tick_get();
+    int active = -1;
+    int err = -1;
+    std::string astate, estate;
+    auto pick_active = [&](int i) {
+        if (i < 0 || i > 3 || active >= 0) return;
+        if (feed_state_active(s.feed[i].state)) {
+            active = i;
+            astate = s.feed[i].state;
+        }
+    };
+    for (int i = 0; i < 4; i++) {
+        const FeedChannel& f = s.feed[i];
+        if (err < 0 && ((!f.error.empty() && f.error != "ok") ||
+                        f.state.find("fail") != std::string::npos)) {
+            err = i;
+            estate = (!f.error.empty() && f.error != "ok") ? f.error : f.state;
+        }
+    }
+    pick_active(g_feed_pref_tool);
+    pick_active(g_sheet_tool);
+    for (int i = 0; i < 4; i++) pick_active(i);
+
+    if (err >= 0) {
+        std::string key = std::to_string(err) + ":" + estate;
+        if (key != g_feed_err_seen) {
+            g_feed_err_seen = key;
+            std::string act = feed_action(astate);
+            std::string title = feed_title(act, false, true, err);
+            feed_banner_set(true, false, IC_CLOSE, title.c_str(), estate.c_str());
+            g_feed_error_until = now + 6000;
+            g_feed_was_active = false;
+            g_feed_local = false;
+        }
+    } else {
+        g_feed_err_seen.clear();
+    }
+    if (g_feed_error_until && now < g_feed_error_until) return;
+
+    if (active >= 0) {
+        std::string act = feed_action(astate);
+        feed_banner_set(false, false, act == "unload" ? IC_UNLOAD : IC_LOAD,
+                        feed_title(act, false, false, active).c_str(),
+                        feed_state_text(astate).c_str());
+        g_feed_was_active = true;
+        g_feed_active_tool = active;
+        g_feed_active_state = astate;
+        g_feed_local = false;
+        g_feed_done_until = 0;
+        return;
+    }
+
+    if (g_feed_was_active) {
+        bool failed = g_feed_active_state.find("fail") != std::string::npos;
+        std::string act = feed_action(g_feed_active_state);
+        feed_banner_set(failed, !failed,
+                        failed ? IC_CLOSE : IC_CHECK_CIRCLE,
+                        feed_title(act, true, failed, g_feed_active_tool).c_str(),
+                        failed ? "检查耗材和喷嘴" : "完成");
+        g_feed_done_until = now + (failed ? 6000 : 2200);
+        g_feed_was_active = false;
+        g_feed_pref_tool = -1;
+        return;
+    }
+
+    if (g_feed_done_until && now < g_feed_done_until) return;
+
+    if (g_feed_local) {
+        if (now - g_feed_local_at < 15000) {
+            std::string act = g_feed_local_kind == 2 ? "unload" : "load";
+            feed_banner_set(false, false, act == "unload" ? IC_UNLOAD : IC_LOAD,
+                            feed_title(act, false, false, g_feed_local_tool).c_str(),
+                            "等待打印机…");
+            return;
+        }
+        g_feed_local = false;
+    }
+    feed_banner_hide();
+}
+
+void feed_icon_apply(int i, int mode) {
+    if (i < 0 || i > 3) return;
+    uint32_t line_c = theme::MUTED, head_c = theme::MUTED;
+    if (mode == 1 || mode == 2) {
+        line_c = theme::PRIMARY;
+        head_c = theme::PRIMARY;
+    } else if (mode == 4) {
+        line_c = theme::DANGER;
+        head_c = theme::DANGER;
+    }
+    if (R.nozzle_feed_line[i])
+        lv_obj_set_style_bg_color(R.nozzle_feed_line[i], theme::c(line_c), 0);
+    if (R.nozzle_feed_head[i])
+        lv_obj_set_style_text_color(R.nozzle_feed_head[i], theme::c(head_c), 0);
+    if (R.nozzle_feed_line[i])
+        lv_obj_set_style_translate_y(R.nozzle_feed_line[i], mode == 1 ? 2 : 0, 0);
+}
+
+void feed_icons_tick(lv_timer_t*) {
+    uint32_t t = lv_tick_get();
+    int phase = (int)((t / 180) % 2);
+    for (int i = 0; i < 4; i++) {
+        int m = g_nozzle_feed_mode[i];
+        if (!R.nozzle_feed_line[i]) continue;
+        if (m == 2) lv_obj_set_style_translate_y(R.nozzle_feed_line[i], 1 + phase, 0);
+        else if (m == 3) lv_obj_set_style_translate_y(R.nozzle_feed_line[i], 1 - phase, 0);
+    }
+}
+
+void build_feed_banner(lv_obj_t* screen) {
+    const char* rail_env = getenv("SKREEU1_RAIL");
+    const bool rail_right = rail_env && std::string(rail_env) == "right";
+
+    lv_obj_t* b = mk_obj(screen);
+    lv_obj_set_size(b, 280, 42);
+    lv_obj_align(b, LV_ALIGN_TOP_MID, rail_right ? -36 : 36, 6);
+    lv_obj_set_style_bg_color(b, theme::c(theme::SURFACE_HI), 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(b, 14, 0);
+    lv_obj_set_style_pad_all(b, 10, 0);
+    lv_obj_set_style_border_width(b, 1, 0);
+    lv_obj_set_style_border_color(b, theme::c(theme::OUTLINE), 0);
+    lv_obj_set_style_shadow_width(b, 16, 0);
+    lv_obj_set_style_shadow_opa(b, LV_OPA_40, 0);
+    lv_obj_set_style_shadow_color(b, theme::c(0x000000), 0);
+    lv_obj_set_flex_flow(b, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(b, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(b, 8, 0);
+    lv_obj_remove_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(b, LV_OBJ_FLAG_HIDDEN);
+    R.feed_banner = b;
+
+    R.feed_banner_icon = mk_icon(b, IC_LOAD, 18, theme::PRIMARY);
+
+    lv_obj_t* col = mk_obj(b);
+    lv_obj_set_height(col, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(col, 1);
+    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(col, 0, 0);
+    R.feed_banner_title = mk_label(col, "", 13, true, theme::TEXT);
+    lv_obj_set_width(R.feed_banner_title, LV_PCT(100));
+    lv_label_set_long_mode(R.feed_banner_title, LV_LABEL_LONG_MODE_DOTS);
+    R.feed_banner_sub = mk_label(col, "", 10, false, theme::MUTED);
+    lv_obj_set_width(R.feed_banner_sub, LV_PCT(100));
+    lv_label_set_long_mode(R.feed_banner_sub, LV_LABEL_LONG_MODE_DOTS);
+
+    lv_obj_t* sp = lv_spinner_create(b);
+    lv_obj_set_size(sp, 18, 18);
+    lv_obj_set_style_arc_width(sp, 2, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(sp, 2, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(sp, theme::c(theme::OUTLINE), LV_PART_MAIN);
+    lv_obj_set_style_arc_color(sp, theme::c(theme::PRIMARY), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(sp, LV_OPA_TRANSP, LV_PART_KNOB);
+    R.feed_banner_spin = sp;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------- public
@@ -2961,6 +3288,8 @@ void ui_init(Moonraker* mr, lv_obj_t* screen, Wifi* wifi) {
     build_keypad(screen);
     build_nozzle_page(screen);
     build_net_page(screen);
+    build_feed_banner(screen);
+    lv_timer_create([](lv_timer_t* t) { feed_icons_tick(t); }, 60, nullptr);
 
     // 轻提示（操作回退时用）
     lv_obj_t* toast = mk_obj(screen);
@@ -3198,6 +3527,20 @@ void ui_tick() {
         }
     }
     apply_light_ui(light);
+    for (int i = 0; i < 4; i++) {
+        const FeedChannel& fc = s.feed[i];
+        int fm = 0;
+        if (!fc.error.empty() && fc.error != "ok") fm = 4;
+        else if (fc.state.find("fail") != std::string::npos) fm = 4;
+        else if (fc.state == "load_finish") fm = 1;
+        else if (fc.state.rfind("load", 0) == 0 && feed_state_active(fc.state)) fm = 2;
+        else if (fc.state.rfind("unload", 0) == 0 && feed_state_active(fc.state)) fm = 3;
+        if (fm != g_nozzle_feed_mode[i]) {
+            g_nozzle_feed_mode[i] = fm;
+            feed_icon_apply(i, fm);
+        }
+    }
+    feed_tick(s);
     update_sheet();
     update_temp_page();
     update_nozzle_page();

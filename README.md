@@ -15,7 +15,7 @@ It talks to Moonraker directly and keeps the stock services (unisrv / MQTT) runn
 
 - **4 页导航**：首页 / 打印 / 维护 / 设置，左侧悬浮胶囊导航（可用 `SKREEU1_RAIL=right` 换到右侧）
 - **首页**：打印状态卡、热床卡（点开调温）、4 个喷嘴大卡片（温度、目标、耗材颜色/类型、NFC 标识）
-- **喷嘴详情**：耗材卡、温度卡、自动进料、喷嘴参数（0.2/0.4/0.6/0.8 + 标准/高流）、载入/退料
+- **喷嘴详情**：耗材卡、温度卡、自动预进料、喷嘴参数（0.2/0.4/0.6/0.8 + 标准/高流）、载入/退料
 - **调温浮层**：竖向滑块（松手才下发）、数字键盘、6 个可编辑快捷温度；喷嘴 `M104`、热床 `M140`
 - **更换耗材**：品牌列 + 28 色调色板 + 型号列表，支持自定义品牌和自定义类型
 - **打印页**：进度环、速度倍率、Z-offset、暂停/继续/取消
@@ -25,6 +25,8 @@ It talks to Moonraker directly and keeps the stock services (unisrv / MQTT) runn
 - 空闲 5 分钟自动熄屏（只关背光、保持显示输出），触摸一下立即亮起，不会误点界面
 - Wi-Fi 管理：扫描、连接（WPA2/WPA3/开放网络）、断开，显示 SSID / IP / 信号强度
 - 首页顶部「灯光」开关，直接控制腔体灯（`led cavity_led`），状态从打印机读取
+- 每个喷嘴卡右下角有「工具头 + 耗材」小图标：橙色=已进到挤出机，灰色=未进料（预加载也算未进料），转圈=进料/退料中，红色=失败
+- 进料/退料时顶部显示圆角状态通知（旋转动画 + 当前阶段）
 - 中文用 FreeType 运行时渲染，不预烘焙字库；整屏强制重绘约 2ms/帧，空闲 CPU ≈1%
 
 ## 截图
@@ -34,8 +36,8 @@ It talks to Moonraker directly and keeps the stock services (unisrv / MQTT) runn
 | ![首页](docs/screenshots/home.png) | ![喷嘴详情](docs/screenshots/nozzle.png) | ![调温](docs/screenshots/temp.png) |
 | **更换耗材** | **打印** | **维护** |
 | ![更换耗材](docs/screenshots/materials.png) | ![打印](docs/screenshots/print.png) | ![维护](docs/screenshots/maintenance.png) |
-| **网络** | **Wi-Fi 密码** |  |
-| ![网络](docs/screenshots/network.png) | ![Wi-Fi 密码](docs/screenshots/network-pass.png) |  |
+| **网络** | **Wi-Fi 密码** | **进料通知** |
+| ![网络](docs/screenshots/network.png) | ![Wi-Fi 密码](docs/screenshots/network-pass.png) | ![进料通知](docs/screenshots/feed.png) |
 
 设置页：[docs/screenshots/settings.png](docs/screenshots/settings.png)
 
@@ -180,7 +182,7 @@ DRM 显示控制器保持打开。
 
 ### 喷嘴详情
 
-左侧耗材卡（颜色、类型、厂商、NFC 卡型与建议温度），右侧温度卡，下面自动进料和喷嘴参数，
+左侧耗材卡（颜色、类型、厂商、NFC 卡型与建议温度），右侧温度卡，下面自动预进料和喷嘴参数，
 底部是载入 / 退料 / 完成。
 
 - 点温度卡 → 调温浮层
