@@ -152,6 +152,9 @@ SKREEU1_READONLY=1 /userdata/skreeu1/start.sh   # 只读模式
 `start.sh` 的流程是：先让 lmd 正常启动（原厂 GUI，官方服务全部起来），
 再把 skreeu1 只读 bind 到 `/usr/bin/gui`，最后杀掉当前 gui 子进程让 lmd 拉起 skreeu1。
 
+程序会每 2 秒清一次 `fbcon` / backlight 的空闲 blank，避免系统把面板断电后
+「触摸有反应但屏幕是黑的」；不会改 `brightness`，保留原厂亮度设置。
+
 设备上没有 SDL 视频驱动，所以真机走 LVGL 自带的 `lv_linux_fbdev`
 （`/dev/fb0`，480×320×32）+ `lv_evdev`（`/dev/input/event0`）。
 可以用 `SKREEU1_FB` / `SKREEU1_TOUCH` 覆盖设备节点。

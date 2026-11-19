@@ -2399,7 +2399,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.1.0 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.1.1 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）

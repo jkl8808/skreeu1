@@ -7,6 +7,9 @@
 
 #include <chrono>
 #include <cstdio>
+#if SKREEU1_DEVICE
+#include <dirent.h>
+#endif
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -27,6 +30,36 @@ constexpr int SCREEN_W = 480;
 constexpr int SCREEN_H = 320;
 
 uint32_t g_fb[SCREEN_W * SCREEN_H];
+
+#if SKREEU1_DEVICE
+// 屏幕空闲 blank：fbcon/DRM 的 console blank 计时器到点会把面板断电
+// （/sys/class/backlight/backlight/bl_power = 4），触摸还能用但屏幕是黑的。
+// 这里定期把 fb 和 backlight 唤醒；不碰 brightness，保留原厂亮度设置。
+void display_keepalive(bool force) {
+    using namespace std::chrono;
+    static auto last = steady_clock::now() - seconds(10);
+    auto now = steady_clock::now();
+    if (!force && now - last < seconds(2)) return;
+    last = now;
+
+    if (FILE* f = fopen("/sys/class/graphics/fb0/blank", "w")) {
+        fputs("0", f);
+        fclose(f);
+    }
+    DIR* d = opendir("/sys/class/backlight");
+    if (!d) return;
+    while (struct dirent* e = readdir(d)) {
+        if (e->d_name[0] == '.') continue;
+        char path[256];
+        snprintf(path, sizeof path, "/sys/class/backlight/%s/bl_power", e->d_name);
+        if (FILE* f = fopen(path, "w")) {
+            fputs("0", f);
+            fclose(f);
+        }
+    }
+    closedir(d);
+}
+#endif
 
 uint32_t tick_ms() {
     using namespace std::chrono;
@@ -174,6 +207,10 @@ int main(int argc, char** argv) {
 #endif
     }
 
+#if SKREEU1_DEVICE
+    display_keepalive(true);
+#endif
+
     Moonraker mr(cfg);
     mr.start();
 
@@ -267,6 +304,9 @@ int main(int argc, char** argv) {
     }
 
     while (true) {
+#if SKREEU1_DEVICE
+        display_keepalive(false);
+#endif
         lv_timer_handler();
         usleep(5000);
     }
