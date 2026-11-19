@@ -7,9 +7,6 @@
 
 #include <chrono>
 #include <cstdio>
-#if SKREEU1_DEVICE
-#include <dirent.h>
-#endif
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -32,34 +29,74 @@ constexpr int SCREEN_H = 320;
 uint32_t g_fb[SCREEN_W * SCREEN_H];
 
 #if SKREEU1_DEVICE
-// 背光保活：原厂 GUI 的息屏流程会写 bl_power=4，这里定期写回 0。
-// 注意这只能恢复背光，恢复不了 DRM CRTC；接管时不要重启 lmd/unisrv，
-// 否则 CRTC 会一直关着，画面在更新但屏幕是黑的。不碰 brightness。
-void display_keepalive(bool force) {
-    using namespace std::chrono;
-    static auto last = steady_clock::now() - seconds(10);
-    auto now = steady_clock::now();
-    if (!force && now - last < seconds(2)) return;
-    last = now;
+// ---- 屏幕熄屏 / 唤醒 ----------------------------------------------------
+// 只关背光（bl_power=4），保持 DRM CRTC 开启：这样唤醒一定可靠，
+// 也不会再出现"背光亮了但 CRTC 关着，屏幕仍然黑"的情况。
+bool g_screen_asleep = false;
+bool g_swallow_touch = false;   // 唤醒的那一下不能顺带点到界面
+uint32_t g_screen_timeout_ms = 0;
+uint32_t g_next_sleep_at = 0;
 
-    if (FILE* f = fopen("/sys/class/graphics/fb0/blank", "w")) {
-        fputs("0", f);
+void backlight_power(const char* val) {
+    if (FILE* f = fopen("/sys/class/backlight/backlight/bl_power", "w")) {
+        fputs(val, f);
         fclose(f);
     }
-    DIR* d = opendir("/sys/class/backlight");
-    if (!d) return;
-    while (struct dirent* e = readdir(d)) {
-        if (e->d_name[0] == '.') continue;
-        char path[256];
-        snprintf(path, sizeof path, "/sys/class/backlight/%s/bl_power", e->d_name);
-        if (FILE* f = fopen(path, "w")) {
-            fputs("0", f);
+}
+
+uint32_t screen_timeout_from_cfg() {
+    long sec = -1;
+    if (const char* e = getenv("SKREEU1_SCREEN_OFF")) sec = atol(e);
+    if (sec < 0) {
+        const char* path = "/userdata/skreeu1/skreeu1_screen.cfg";
+        if (FILE* f = fopen(path, "r")) {
+            if (fscanf(f, "%ld", &sec) != 1) sec = -1;
             fclose(f);
         }
     }
-    closedir(d);
+    if (sec < 0) sec = 300;       // 默认 5 分钟
+    if (sec == 0) return 0;       // 0 = 不熄屏
+    if (sec < 5) sec = 5;
+    return (uint32_t)sec * 1000;
+}
+
+void screen_wake() {
+    if (!g_screen_asleep) return;
+    backlight_power("0");
+    g_screen_asleep = false;
+    if (g_screen_timeout_ms) g_next_sleep_at = lv_tick_get() + g_screen_timeout_ms;
+}
+
+void screen_sleep() {
+    if (g_screen_asleep || g_screen_timeout_ms == 0) return;
+    backlight_power("4");
+    g_screen_asleep = true;
+}
+
+lv_indev_read_cb_t g_touch_read_cb = nullptr;
+
+void touch_read_cb(lv_indev_t* indev, lv_indev_data_t* data) {
+    if (!g_touch_read_cb) return;
+    g_touch_read_cb(indev, data);
+
+    if (g_swallow_touch) {
+        if (data->state == LV_INDEV_STATE_RELEASED) g_swallow_touch = false;
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
+    if (g_screen_asleep) {
+        if (data->state == LV_INDEV_STATE_PRESSED) {
+            screen_wake();
+            g_swallow_touch = true;   // 吃掉这一次按下，等抬手
+        }
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
+    if (data->state == LV_INDEV_STATE_PRESSED && g_screen_timeout_ms)
+        g_next_sleep_at = lv_tick_get() + g_screen_timeout_ms;
 }
 #endif
+
 
 uint32_t tick_ms() {
     using namespace std::chrono;
@@ -197,10 +234,17 @@ int main(int argc, char** argv) {
         }
         const char* touch = getenv("SKREEU1_TOUCH");
         if (!touch) touch = "/dev/input/event0";
-        if (!lv_evdev_create(LV_INDEV_TYPE_POINTER, touch))
+        lv_indev_t* indev = lv_evdev_create(LV_INDEV_TYPE_POINTER, touch);
+        if (!indev) {
             fprintf(stderr, "touch open failed: %s\n", touch);
-        else
+        } else {
             fprintf(stderr, "touch ok: %s\n", touch);
+            g_screen_timeout_ms = screen_timeout_from_cfg();
+            if (g_screen_timeout_ms)
+                g_next_sleep_at = lv_tick_get() + g_screen_timeout_ms;
+            g_touch_read_cb = lv_indev_get_read_cb(indev);
+            if (g_touch_read_cb) lv_indev_set_read_cb(indev, touch_read_cb);
+        }
 #else
         disp = lv_sdl_window_create(SCREEN_W, SCREEN_H);
         lv_sdl_mouse_create();
@@ -208,7 +252,7 @@ int main(int argc, char** argv) {
     }
 
 #if SKREEU1_DEVICE
-    display_keepalive(true);
+    backlight_power("0");
 #endif
 
     Moonraker mr(cfg);
@@ -305,7 +349,9 @@ int main(int argc, char** argv) {
 
     while (true) {
 #if SKREEU1_DEVICE
-        display_keepalive(false);
+        if (g_screen_timeout_ms && !g_screen_asleep &&
+            (int32_t)(lv_tick_get() - g_next_sleep_at) >= 0)
+            screen_sleep();
 #endif
         lv_timer_handler();
         usleep(5000);

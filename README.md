@@ -22,6 +22,7 @@ It talks to Moonraker directly and keeps the stock services (unisrv / MQTT) runn
 - **维护页**：净化器、换头次数、喷嘴、空打检测、异物检测
 - **设置页**：设备信息（SN / 固件 / 喷嘴，从打印机读取）、7 项打印偏好、运行统计、灯光
 - 所有写操作都是**乐观更新**：先用本地值显示，轮询确认不上就 8 秒后弹提示并回退
+- 空闲 5 分钟自动熄屏（只关背光、保持显示输出），触摸一下立即亮起，不会误点界面
 - 中文用 FreeType 运行时渲染，不预烘焙字库；整屏强制重绘约 2ms/帧，空闲 CPU ≈1%
 
 ## 截图
@@ -156,8 +157,10 @@ SKREEU1_READONLY=1 /userdata/skreeu1/start.sh   # 只读模式
 `/usr/bin/gui` → 再杀一次 gui，让 lmd 拉起 skreeu1。整个过程 lmd / unisrv 都不重启，
 DRM 显示控制器保持打开。
 
-接管后程序每 2 秒把 backlight 的 `bl_power` 写回 0，防止被其他进程息屏；
-这只能恢复背光，不能恢复 DRM 输出，所以关键是接管前屏幕必须已经亮着。
+程序空闲 5 分钟后把背光 `bl_power` 写成 4 熄屏，DRM 显示输出保持开启；
+触摸按下时立即写回 0 唤醒，并吞掉这一次点击，不会误触界面。
+超时时间可以用 `SKREEU1_SCREEN_OFF`（秒，0 = 不熄屏）或
+`/userdata/skreeu1/skreeu1_screen.cfg` 调整。
 
 设备上没有 SDL 视频驱动，所以真机走 LVGL 自带的 `lv_linux_fbdev`
 （`/dev/fb0`，480×320×32）+ `lv_evdev`（`/dev/input/event0`）。
@@ -197,6 +200,7 @@ DRM 显示控制器保持打开。
 | `skreeu1_types.cfg` | 自定义类型，一行 `TYPE` 或 `TYPE SUBTYPE`，`#` 注释 | `SKREEU1_TYPES` |
 | `skreeu1_temps.cfg` | 喷嘴 6 个快捷温度 | `SKREEU1_TEMPS` |
 | `skreeu1_bed_temps.cfg` | 热床 6 个快捷温度 | `SKREEU1_BED_TEMPS` |
+| `skreeu1_screen.cfg` | 空闲熄屏秒数（默认 300，0 = 不熄屏） | `SKREEU1_SCREEN_OFF` |
 
 改品牌/类型不需要重启，下次打开更换界面时重读；快捷温度启动时读。
 
