@@ -65,6 +65,7 @@ add_executable(skreeu1
     src/theme.cpp
     src/ui.cpp
     src/moonraker.cpp
+    src/wifi.cpp
 )
 
 target_compile_definitions(skreeu1 PRIVATE

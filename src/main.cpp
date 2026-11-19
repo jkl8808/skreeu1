@@ -1,6 +1,7 @@
 #include "app.h"
 #include "theme.h"
 #include "ui.h"
+#include "wifi.h"
 
 #include <lvgl.h>
 #include <png.h>
@@ -141,8 +142,8 @@ void save_png(const char* path) {
 
 void parse_args(int argc, char** argv, Config& cfg, std::string& shot_path, int& page,
                 int& scroll, int& bench, int& sheet, bool& picker, bool& temp_page,
-                bool& bed_temp, bool& keypad, bool& nozzle, bool& color, bool& toast,
-                int& slot) {
+                bool& bed_temp, bool& net, bool& keypad, bool& nozzle, bool& color,
+                bool& toast, int& slot) {
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--shot" && i + 1 < argc) {
@@ -167,6 +168,8 @@ void parse_args(int argc, char** argv, Config& cfg, std::string& shot_path, int&
             temp_page = true;
         } else if (a == "--bed") {
             bed_temp = true;
+        } else if (a == "--net") {
+            net = true;
         } else if (a == "--keypad") {
             keypad = true;
         } else if (a == "--slot" && i + 1 < argc) {
@@ -200,13 +203,14 @@ int main(int argc, char** argv) {
     bool picker = false;
     bool temp_page = false;
     bool bed_temp = false;
+    bool net = false;
     bool keypad = false;
     bool nozzle = false;
     bool color = false;
     bool toast = false;
     int slot = -1;
     parse_args(argc, argv, cfg, shot_path, page, scroll, bench, sheet, picker, temp_page,
-               bed_temp, keypad, nozzle, color, toast, slot);
+               bed_temp, net, keypad, nozzle, color, toast, slot);
 
     lv_init();
     lv_tick_set_cb(tick_ms);
@@ -258,7 +262,10 @@ int main(int argc, char** argv) {
     Moonraker mr(cfg);
     mr.start();
 
-    ui_init(&mr, lv_screen_active());
+    Wifi wifi;
+    wifi.start();
+
+    ui_init(&mr, lv_screen_active(), &wifi);
     ui_show(page);
 
     lv_timer_create([](lv_timer_t*) { ui_tick(); }, 500, nullptr);
@@ -307,6 +314,11 @@ int main(int argc, char** argv) {
             ui_show(0);
             ui_open_bed_temp();
             render_frames(6);
+        }
+        if (net) {
+            ui_show(3);
+            ui_open_net();
+            render_frames(8);
         }
         if (temp_page) {
             ui_show(0);

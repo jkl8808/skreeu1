@@ -23,6 +23,7 @@ It talks to Moonraker directly and keeps the stock services (unisrv / MQTT) runn
 - **设置页**：设备信息（SN / 固件 / 喷嘴，从打印机读取）、7 项打印偏好、运行统计、灯光
 - 所有写操作都是**乐观更新**：先用本地值显示，轮询确认不上就 8 秒后弹提示并回退
 - 空闲 5 分钟自动熄屏（只关背光、保持显示输出），触摸一下立即亮起，不会误点界面
+- Wi-Fi 管理：扫描、连接（WPA2/WPA3/开放网络）、断开，显示 SSID / IP / 信号强度
 - 中文用 FreeType 运行时渲染，不预烘焙字库；整屏强制重绘约 2ms/帧，空闲 CPU ≈1%
 
 ## 截图
@@ -32,6 +33,8 @@ It talks to Moonraker directly and keeps the stock services (unisrv / MQTT) runn
 | ![首页](docs/screenshots/home.png) | ![喷嘴详情](docs/screenshots/nozzle.png) | ![调温](docs/screenshots/temp.png) |
 | **更换耗材** | **打印** | **维护** |
 | ![更换耗材](docs/screenshots/materials.png) | ![打印](docs/screenshots/print.png) | ![维护](docs/screenshots/maintenance.png) |
+| **网络** | **Wi-Fi 密码** |  |
+| ![网络](docs/screenshots/network.png) | ![Wi-Fi 密码](docs/screenshots/network-pass.png) |  |
 
 设置页：[docs/screenshots/settings.png](docs/screenshots/settings.png)
 
@@ -204,6 +207,20 @@ DRM 显示控制器保持打开。
 
 改品牌/类型不需要重启，下次打开更换界面时重读；快捷温度启动时读。
 
+## 网络管理
+
+设置页底部的「网络」卡片会显示当前 SSID 和 IP，点进去是 Wi-Fi 面板：
+
+- 自动扫描并列出周围网络（按信号排序，带锁图标和信号强度）
+- 点开放网络直接连接；点加密网络弹出密码键盘（支持大小写/符号，密码不回显）
+- 已连接的网络会高亮并打勾，底部可以「扫描」或「断开」
+- 连接状态、IP、RSSI 每 3 秒刷新，失败会弹提示
+
+实现上直接调用打印机自带的 `wpa_cli` / `wpa_supplicant`（和原厂 GUI 同一套配置，
+`/home/lava/printer_data/gui/wpa_supplicant.conf`），DHCP 继续由系统的 `dhcpcd` 处理。
+WPA3-SAE 会自动识别；过渡模式（WPA2-PSK+SAE）用 WPA2-PSK 连接。
+接口默认 `wlan0`，可用 `SKREEU1_WIFI_IF` 覆盖。
+
 ## 自定义耗材小工具
 
 `tools/filament_tool.py` 在电脑上运行：通过 SSH 改打印机的品牌/类型列表，
@@ -257,6 +274,8 @@ third_party/    nlohmann/json
 - 摄像头 / 延时摄影、OTA、局域网访问码、云端账号还没接（这些在 unisrv 的 MQTT 里）。
 - 打印机必须处于 LAN 模式，Snapmaker Orca 才能直接连上。
 - 只在 U1 / 固件 2.1.0 上验证过；其他固件版本的对象名和命令可能不同。
+- Wi-Fi 面板暂不支持手动输入隐藏 SSID，也没有做 Wi-Fi 射频开关（只做连接/断开）。
+- 连接新网络会改写 `wpa_supplicant.conf` 里的保存网络，和原厂 GUI 的行为一致。
 - 界面固定按 480×320 设计，没有做其他分辨率适配。
 
 ## 许可证

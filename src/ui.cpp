@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "wifi.h"
 
 #include "app.h"
 #include "theme.h"
@@ -28,6 +29,15 @@ constexpr const char* IC_UNLOAD = "\U000F011D";
 constexpr const char* IC_PALETTE = "\U000F03D8";
 constexpr const char* IC_THERMO = "\U000F050F";
 constexpr const char* IC_BED = "\U000F0438";  // radiator：热床 + 热气
+constexpr const char* IC_WIFI = "\U000F05A9";
+constexpr const char* IC_WIFI_1 = "\U000F091F";
+constexpr const char* IC_WIFI_2 = "\U000F0922";
+constexpr const char* IC_WIFI_3 = "\U000F0925";
+constexpr const char* IC_WIFI_4 = "\U000F0928";
+constexpr const char* IC_WIFI_OFF = "\U000F05AA";
+constexpr const char* IC_LOCK = "\U000F033E";
+constexpr const char* IC_REFRESH = "\U000F0450";
+constexpr const char* IC_CHECK_CIRCLE = "\U000F05E0";
 constexpr const char* IC_CHEVRON_RIGHT = "\U000F0142";
 constexpr const char* IC_BACKSPACE = "\U000F0B5C";
 
@@ -65,6 +75,21 @@ const uint32_t kPalette[28] = {
 void update_sheet();
 void update_nozzle_page();
 void show_toast(const char* msg);
+void open_net_page();
+void net_card_cb(lv_event_t* e);
+
+Wifi* WIFI = nullptr;
+bool g_net_open = false;
+bool g_net_pw_open = false;
+uint32_t g_net_req_at = 0;
+uint32_t g_net_scan_at = 0;
+uint32_t g_net_scan_gen = 0;
+std::string g_net_last_ssid;
+bool g_net_last_conn = false;
+std::string g_net_pw_ssid;
+bool g_net_pw_sae = false;
+std::string g_net_last_error;
+std::string g_net_target;
 
 uint32_t g_toast_until = 0;
 std::vector<std::string> g_brands;
@@ -202,6 +227,19 @@ struct Refs {
     lv_obj_t* def_sw = nullptr;
     lv_obj_t* def_group_sw[4] = {nullptr, nullptr, nullptr, nullptr};
     lv_obj_t* def_seg[2] = {nullptr, nullptr};
+
+    // 网络
+    lv_obj_t* net_line = nullptr;
+    lv_obj_t* net_page = nullptr;
+    lv_obj_t* net_status = nullptr;
+    lv_obj_t* net_sub = nullptr;
+    lv_obj_t* net_list = nullptr;
+    lv_obj_t* net_scan_btn = nullptr;
+    lv_obj_t* net_dis_btn = nullptr;
+    lv_obj_t* net_pw_page = nullptr;
+    lv_obj_t* net_pw_title = nullptr;
+    lv_obj_t* net_pw_ta = nullptr;
+    lv_obj_t* net_pw_kb = nullptr;
 } R;
 
 // ---------------------------------------------------------------- helpers
@@ -1345,6 +1383,10 @@ void hide_sheets() {
     if (R.nz_scrim) lv_obj_add_flag(R.nz_scrim, LV_OBJ_FLAG_HIDDEN);
     if (R.color_page) lv_obj_add_flag(R.color_page, LV_OBJ_FLAG_HIDDEN);
     if (R.color_scrim) lv_obj_add_flag(R.color_scrim, LV_OBJ_FLAG_HIDDEN);
+    if (R.net_page) lv_obj_add_flag(R.net_page, LV_OBJ_FLAG_HIDDEN);
+    if (R.net_pw_page) lv_obj_add_flag(R.net_pw_page, LV_OBJ_FLAG_HIDDEN);
+    g_net_open = false;
+    g_net_pw_open = false;
     g_edit_slot = -1;
 }
 
@@ -2399,7 +2441,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.2.0 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.3.0 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）
@@ -2460,6 +2502,17 @@ void build_settings(lv_obj_t* p) {
     R.conn_line = mk_label(c1, "—", 13, false, theme::MUTED);
     lv_obj_align(R.conn_line, LV_ALIGN_TOP_LEFT, 0, 24);
 
+    // 网络（点整张卡进入管理面板）
+    lv_obj_t* cw = mk_card(p);
+    lv_obj_set_size(cw, LV_PCT(100), 84);
+    lv_obj_add_flag(cw, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(cw, net_card_cb, LV_EVENT_CLICKED, nullptr);
+    mk_label(cw, "网络", 14, true, theme::TEXT);
+    R.net_line = mk_label(cw, "—", 13, false, theme::MUTED);
+    lv_obj_align(R.net_line, LV_ALIGN_TOP_LEFT, 0, 24);
+    lv_obj_t* ch = mk_icon(cw, IC_CHEVRON_RIGHT, 18, theme::MUTED);
+    lv_obj_align(ch, LV_ALIGN_RIGHT_MID, 0, 0);
+
     lv_obj_t* acts = mk_obj(p);
     lv_obj_set_size(acts, LV_PCT(100), 50);
     lv_obj_set_flex_flow(acts, LV_FLEX_FLOW_ROW);
@@ -2468,16 +2521,310 @@ void build_settings(lv_obj_t* p) {
     mk_button(acts, "开灯", false, action_cb, (void*)"SET_LED LED=cavity_led WHITE=1");
 }
 
+
+// ---------------------------------------------------------------- 网络
+
+struct NetPick {
+    std::string ssid;
+    bool sae = false;
+    bool secure = false;
+};
+
+const char* wifi_signal_icon(int rssi) {
+    if (rssi >= -55) return IC_WIFI_4;
+    if (rssi >= -67) return IC_WIFI_3;
+    if (rssi >= -75) return IC_WIFI_2;
+    return IC_WIFI_1;
+}
+
+void net_close_cb(lv_event_t*) {
+    if (R.net_page) lv_obj_add_flag(R.net_page, LV_OBJ_FLAG_HIDDEN);
+    g_net_open = false;
+}
+
+void net_pw_close_cb(lv_event_t*) {
+    if (R.net_pw_page) lv_obj_add_flag(R.net_pw_page, LV_OBJ_FLAG_HIDDEN);
+    g_net_pw_open = false;
+}
+
+void net_pw_connect_cb(lv_event_t*) {
+    if (!WIFI || !R.net_pw_ta) return;
+    const char* pass = lv_textarea_get_text(R.net_pw_ta);
+    if (!pass || !*pass) {
+        show_toast("请输入 Wi-Fi 密码");
+        return;
+    }
+    g_net_target = g_net_pw_ssid;
+    WIFI->request_connect(g_net_pw_ssid, pass, g_net_pw_sae);
+    net_pw_close_cb(nullptr);
+    show_toast("正在连接…");
+}
+
+void net_pw_kb_cb(lv_event_t* e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_READY) net_pw_connect_cb(e);
+    else if (code == LV_EVENT_CANCEL) net_pw_close_cb(e);
+}
+
+void open_net_pw(const std::string& ssid, bool sae) {
+    if (!R.net_pw_page) return;
+    g_net_pw_ssid = ssid;
+    g_net_pw_sae = sae;
+    g_net_pw_open = true;
+    if (R.net_pw_title) lv_label_set_text(R.net_pw_title, ssid.c_str());
+    if (R.net_pw_ta) lv_textarea_set_text(R.net_pw_ta, "");
+    lv_obj_remove_flag(R.net_pw_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_to_index(R.net_pw_page, -1);
+    if (R.net_pw_kb && R.net_pw_ta) lv_keyboard_set_textarea(R.net_pw_kb, R.net_pw_ta);
+}
+
+void net_row_del_cb(lv_event_t* e) {
+    delete static_cast<NetPick*>(lv_event_get_user_data(e));
+}
+
+void net_row_cb(lv_event_t* e) {
+    NetPick* pick = static_cast<NetPick*>(lv_event_get_user_data(e));
+    if (!pick || !WIFI) return;
+    if (pick->secure) {
+        open_net_pw(pick->ssid, pick->sae);
+    } else {
+        g_net_target = pick->ssid;
+        WIFI->request_connect(pick->ssid, "", false);
+        show_toast("正在连接…");
+    }
+}
+
+void net_rebuild_list(const WifiSnapshot& s) {
+    if (!R.net_list) return;
+    lv_obj_clean(R.net_list);
+
+    if (s.networks.empty()) {
+        lv_obj_t* hint = mk_label(R.net_list, s.scanning ? "正在扫描…" : "没有找到网络，点扫描重试",
+                                  13, false, theme::MUTED);
+        lv_obj_set_width(hint, LV_PCT(100));
+        lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_pad_top(hint, 24, 0);
+        return;
+    }
+
+    for (const auto& n : s.networks) {
+        bool conn = s.connected && n.ssid == s.ssid;
+        lv_obj_t* row = lv_button_create(R.net_list);
+        lv_obj_set_size(row, LV_PCT(100), 40);
+        lv_obj_set_style_radius(row, 10, 0);
+        lv_obj_set_style_bg_color(row, theme::c(conn ? theme::SURFACE_HI : theme::SURFACE), 0);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_shadow_width(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 8, 0);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                              LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_column(row, 8, 0);
+
+        mk_icon(row, wifi_signal_icon(n.signal), 18,
+                conn ? theme::PRIMARY : theme::MUTED);
+        lv_obj_t* name = mk_label(row, n.ssid.c_str(), 14, conn, theme::TEXT);
+        lv_obj_set_flex_grow(name, 1);
+        lv_obj_set_style_max_width(name, 230, 0);
+        lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
+        if (n.secure) mk_icon(row, IC_LOCK, 14, theme::MUTED);
+        if (conn) mk_icon(row, IC_CHECK_CIRCLE, 16, theme::PRIMARY);
+
+        NetPick* pick = new NetPick{n.ssid, n.sae, n.secure};
+        lv_obj_add_event_cb(row, net_row_cb, LV_EVENT_CLICKED, pick);
+        lv_obj_add_event_cb(row, net_row_del_cb, LV_EVENT_DELETE, pick);
+    }
+}
+
+void net_refresh_ui(const WifiSnapshot& s) {
+    if (R.net_status) {
+        if (!s.available) {
+            lv_label_set_text(R.net_status, "Wi-Fi 不可用");
+        } else if (s.connecting) {
+            lv_label_set_text(R.net_status, "正在连接…");
+        } else if (s.connected) {
+            lv_label_set_text(R.net_status, s.ssid.empty() ? "已连接" : s.ssid.c_str());
+        } else if (s.scanning) {
+            lv_label_set_text(R.net_status, "正在扫描…");
+        } else {
+            lv_label_set_text(R.net_status, "未连接");
+        }
+    }
+    if (R.net_sub) {
+        char buf[128];
+        if (!s.available) {
+            snprintf(buf, sizeof(buf), "找不到 wpa_supplicant");
+        } else if (s.connecting) {
+            snprintf(buf, sizeof(buf), "%s", g_net_target.empty() ? "请稍候" : g_net_target.c_str());
+        } else if (s.connected) {
+            snprintf(buf, sizeof(buf), "%s · %d dBm",
+                     s.ip.empty() ? "等待 IP" : s.ip.c_str(), s.rssi);
+        } else {
+            snprintf(buf, sizeof(buf), "点按下面的网络进行连接");
+        }
+        lv_label_set_text(R.net_sub, buf);
+    }
+    if (R.net_scan_btn) {
+        if (s.scanning || s.connecting) lv_obj_add_state(R.net_scan_btn, LV_STATE_DISABLED);
+        else lv_obj_remove_state(R.net_scan_btn, LV_STATE_DISABLED);
+    }
+    if (R.net_dis_btn) {
+        if (!s.connected) lv_obj_add_state(R.net_dis_btn, LV_STATE_DISABLED);
+        else lv_obj_remove_state(R.net_dis_btn, LV_STATE_DISABLED);
+    }
+
+    bool dirty = s.scan_gen != g_net_scan_gen || s.connected != g_net_last_conn ||
+                 s.ssid != g_net_last_ssid;
+    if (dirty) {
+        g_net_scan_gen = s.scan_gen;
+        g_net_last_conn = s.connected;
+        g_net_last_ssid = s.ssid;
+        net_rebuild_list(s);
+    }
+}
+
+void net_refresh_cb(lv_event_t*) {
+    g_net_scan_at = lv_tick_get();
+    if (WIFI) WIFI->request_scan();
+    if (R.net_status) lv_label_set_text(R.net_status, "正在扫描…");
+}
+
+void net_disconnect_cb(lv_event_t*) {
+    if (WIFI) WIFI->request_disconnect();
+    show_toast("已断开 Wi-Fi");
+}
+
+void open_net_page() {
+    if (!R.net_page) return;
+    g_net_open = true;
+    lv_obj_remove_flag(R.net_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_to_index(R.net_page, -1);
+    if (!WIFI) return;
+    WIFI->request_status();
+    WifiSnapshot s = WIFI->snapshot();
+    if (s.networks.empty() || lv_tick_get() - g_net_scan_at > 30000) {
+        g_net_scan_at = lv_tick_get();
+        WIFI->request_scan();
+    }
+    net_refresh_ui(s);
+}
+
+void net_card_cb(lv_event_t*) { open_net_page(); }
+
+void build_net_page(lv_obj_t* screen) {
+    lv_obj_t* pg = mk_overlay(screen);
+    R.net_page = pg;
+
+    lv_obj_t* head = mk_obj(pg);
+    lv_obj_set_size(head, LV_PCT(100), 30);
+    lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_t* hl = mk_obj(head);
+    lv_obj_set_height(hl, LV_PCT(100));
+    lv_obj_set_flex_flow(hl, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(hl, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(hl, 8, 0);
+    mk_label(hl, "网络", 20, true, theme::TEXT);
+    mk_close_button(head, net_close_cb);
+
+    lv_obj_t* sc = mk_card(pg, theme::SURFACE);
+    lv_obj_set_size(sc, LV_PCT(100), 58);
+    R.net_status = mk_label(sc, "未连接", 15, true, theme::TEXT);
+    R.net_sub = mk_label(sc, "点按下面的网络进行连接", 11, false, theme::MUTED);
+    lv_obj_align(R.net_sub, LV_ALIGN_TOP_LEFT, 0, 24);
+
+    lv_obj_t* list = mk_obj(pg);
+    lv_obj_set_width(list, LV_PCT(100));
+    lv_obj_set_flex_grow(list, 1);
+    lv_obj_set_style_pad_row(list, 4, 0);
+    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(list, LV_DIR_VER);
+    R.net_list = list;
+
+    lv_obj_t* ft = mk_obj(pg);
+    lv_obj_set_size(ft, LV_PCT(100), 38);
+    lv_obj_set_flex_flow(ft, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(ft, 8, 0);
+    R.net_scan_btn = mk_button(ft, "扫描", false, net_refresh_cb, nullptr, 38);
+    R.net_dis_btn = mk_button(ft, "断开", false, net_disconnect_cb, nullptr, 38);
+    for (lv_obj_t* b : {R.net_scan_btn, R.net_dis_btn}) {
+        lv_obj_set_style_bg_color(b, theme::c(theme::SURFACE), 0);
+        lv_obj_set_style_border_width(b, 1, 0);
+        lv_obj_set_style_border_color(b, theme::c(theme::OUTLINE), 0);
+    }
+
+    // 密码浮层
+    lv_obj_t* pw = mk_overlay(screen);
+    R.net_pw_page = pw;
+
+    lv_obj_t* ph = mk_obj(pw);
+    lv_obj_set_size(ph, LV_PCT(100), 28);
+    lv_obj_set_flex_flow(ph, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(ph, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    R.net_pw_title = mk_label(ph, "Wi-Fi 密码", 17, true, theme::TEXT);
+    mk_close_button(ph, net_pw_close_cb);
+
+    lv_obj_t* ta = lv_textarea_create(pw);
+    lv_obj_set_size(ta, LV_PCT(100), 38);
+    lv_obj_set_style_bg_color(ta, theme::c(theme::SURFACE), 0);
+    lv_obj_set_style_bg_opa(ta, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(ta, 1, 0);
+    lv_obj_set_style_border_color(ta, theme::c(theme::OUTLINE), 0);
+    lv_obj_set_style_radius(ta, 8, 0);
+    lv_obj_set_style_pad_hor(ta, 8, 0);
+    lv_obj_set_style_pad_ver(ta, 4, 0);
+    lv_obj_set_style_text_font(ta, theme::font(15, false), 0);
+    lv_obj_set_style_text_color(ta, theme::c(theme::TEXT), 0);
+    lv_textarea_set_one_line(ta, true);
+    lv_textarea_set_password_mode(ta, true);
+    lv_textarea_set_max_length(ta, 63);
+    lv_textarea_set_placeholder_text(ta, "密码");
+    R.net_pw_ta = ta;
+
+    lv_obj_t* kb = lv_keyboard_create(pw);
+    lv_obj_set_size(kb, LV_PCT(100), 148);
+    lv_obj_set_style_bg_opa(kb, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(kb, 0, 0);
+    lv_obj_set_style_pad_row(kb, 4, LV_PART_ITEMS);
+    lv_obj_set_style_pad_column(kb, 4, LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(kb, theme::c(theme::SURFACE), LV_PART_ITEMS);
+    lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, LV_PART_ITEMS);
+    lv_obj_set_style_text_color(kb, theme::c(theme::TEXT), LV_PART_ITEMS);
+    lv_obj_set_style_border_width(kb, 0, LV_PART_ITEMS);
+    lv_obj_set_style_radius(kb, 6, LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(kb, theme::c(theme::SURFACE_HI), LV_PART_ITEMS | LV_STATE_PRESSED);
+    lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_TEXT_LOWER);
+    lv_keyboard_set_textarea(kb, ta);
+    lv_obj_add_event_cb(kb, net_pw_kb_cb, LV_EVENT_READY, nullptr);
+    lv_obj_add_event_cb(kb, net_pw_kb_cb, LV_EVENT_CANCEL, nullptr);
+    R.net_pw_kb = kb;
+
+    lv_obj_t* pft = mk_obj(pw);
+    lv_obj_set_size(pft, LV_PCT(100), 34);
+    lv_obj_set_flex_flow(pft, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(pft, 8, 0);
+    lv_obj_t* cancel = mk_button(pft, "取消", false, net_pw_close_cb, nullptr, 34);
+    lv_obj_set_style_bg_color(cancel, theme::c(theme::SURFACE), 0);
+    lv_obj_set_style_border_width(cancel, 1, 0);
+    lv_obj_set_style_border_color(cancel, theme::c(theme::OUTLINE), 0);
+    mk_button(pft, "连接", true, net_pw_connect_cb, nullptr, 34);
+}
+
 } // namespace
 
 // ---------------------------------------------------------------- public
 
-void ui_init(Moonraker* mr, lv_obj_t* screen) {
+void ui_init(Moonraker* mr, lv_obj_t* screen, Wifi* wifi) {
     MR = mr;
     load_presets();
     load_bed_presets();
     load_brands();
 
+    WIFI = wifi;
     lv_obj_set_style_bg_color(screen, theme::c(theme::BG), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
 
@@ -2543,6 +2890,7 @@ void ui_init(Moonraker* mr, lv_obj_t* screen) {
     build_temp_page(screen);
     build_keypad(screen);
     build_nozzle_page(screen);
+    build_net_page(screen);
 
     // 轻提示（操作回退时用）
     lv_obj_t* toast = mk_obj(screen);
@@ -2588,6 +2936,10 @@ void ui_open_bed_temp() {
     open_temp_page(1);
 }
 
+void ui_open_net() {
+    open_net_page();
+}
+
 void ui_open_keypad(int slot) {
     const int* arr = (g_temp_kind == 1) ? g_bed_presets : g_presets;
     open_keypad(slot >= 0, slot,
@@ -2621,6 +2973,30 @@ void ui_show(int page) {
 void ui_tick() {
     if (!MR) return;
     PrinterState s = MR->snapshot();
+
+    if (WIFI) {
+        if (lv_tick_get() - g_net_req_at > 3000) {
+            g_net_req_at = lv_tick_get();
+            WIFI->request_status();
+        }
+        WifiSnapshot w = WIFI->snapshot();
+        if (R.net_line) {
+            char buf[128];
+            if (!w.available) snprintf(buf, sizeof(buf), "Wi-Fi 不可用");
+            else if (w.connected)
+                snprintf(buf, sizeof(buf), "%s%s%s", w.ssid.c_str(),
+                         w.ip.empty() ? "" : " · ", w.ip.c_str());
+            else snprintf(buf, sizeof(buf), "未连接 · 点按管理");
+            lv_label_set_text(R.net_line, buf);
+        }
+        if (!w.error.empty() && w.error != g_net_last_error) {
+            show_toast(w.error.c_str());
+            g_net_last_error = w.error;
+        } else if (w.error.empty()) {
+            g_net_last_error.clear();
+        }
+        if (g_net_open) net_refresh_ui(w);
+    }
 
     if (R.toast && g_toast_until && lv_tick_get() > g_toast_until) {
         lv_obj_add_flag(R.toast, LV_OBJ_FLAG_HIDDEN);
