@@ -32,9 +32,9 @@ constexpr int SCREEN_H = 320;
 uint32_t g_fb[SCREEN_W * SCREEN_H];
 
 #if SKREEU1_DEVICE
-// 屏幕空闲 blank：fbcon/DRM 的 console blank 计时器到点会把面板断电
-// （/sys/class/backlight/backlight/bl_power = 4），触摸还能用但屏幕是黑的。
-// 这里定期把 fb 和 backlight 唤醒；不碰 brightness，保留原厂亮度设置。
+// 背光保活：原厂 GUI 的息屏流程会写 bl_power=4，这里定期写回 0。
+// 注意这只能恢复背光，恢复不了 DRM CRTC；接管时不要重启 lmd/unisrv，
+// 否则 CRTC 会一直关着，画面在更新但屏幕是黑的。不碰 brightness。
 void display_keepalive(bool force) {
     using namespace std::chrono;
     static auto last = steady_clock::now() - seconds(10);

@@ -39,13 +39,16 @@ It talks to Moonraker directly and keeps the stock services (unisrv / MQTT) runn
 
 ## 风险与恢复
 
-接管屏幕的方式是：把 skreeu1 只读 bind mount 到 `/usr/bin/gui`，再让 lmd 重新拉起 GUI 子进程。
-**lmd / unisrv / 3893 MQTT / 7125 Moonraker 都不停**，所以官方 App 和切片软件仍然能连。
+接管屏幕的方式是：把 skreeu1 只读 bind mount 到 `/usr/bin/gui`，然后只杀掉 gui 子进程，
+让 lmd 用新文件重新拉起。**不会重启 lmd / unisrv** —— 重启它们会把 DRM 显示控制器
+留在关闭状态，出现「触摸有反应、画面在更新，但屏幕是黑的」。
 
 但请知悉：
 
 - 需要 root SSH；不同固件版本路径可能不一样，升级固件后可能需要重新适配。
 - 打印机重启后会回到**原厂 GUI**，需要再执行一次 `start.sh`。
+- 如果原厂 GUI 正好处于息屏状态，先点一下屏幕唤醒再运行 `start.sh`；
+  脚本会检查 `bl_power`，息屏时会提示。
 - `stop.sh` 随时可以恢复原厂界面；它不会动你的打印配置和耗材数据。
 - 本项目直接下发 G-code（例如 `M104` / `M140` / `AUTO_FEEDING`），请在有人的时候测试。
 - 作者不对任何设备损坏、打印失败或保修问题负责，使用风险自负。
@@ -149,11 +152,12 @@ scripts/install_device.sh root@192.168.1.50 --start
 SKREEU1_READONLY=1 /userdata/skreeu1/start.sh   # 只读模式
 ```
 
-`start.sh` 的流程是：先让 lmd 正常启动（原厂 GUI，官方服务全部起来），
-再把 skreeu1 只读 bind 到 `/usr/bin/gui`，最后杀掉当前 gui 子进程让 lmd 拉起 skreeu1。
+`start.sh` 的流程是：确认 lmd 在跑、屏幕是亮的 → 杀掉原厂 gui → 把 skreeu1 只读 bind 到
+`/usr/bin/gui` → 再杀一次 gui，让 lmd 拉起 skreeu1。整个过程 lmd / unisrv 都不重启，
+DRM 显示控制器保持打开。
 
-程序会每 2 秒清一次 `fbcon` / backlight 的空闲 blank，避免系统把面板断电后
-「触摸有反应但屏幕是黑的」；不会改 `brightness`，保留原厂亮度设置。
+接管后程序每 2 秒把 backlight 的 `bl_power` 写回 0，防止被其他进程息屏；
+这只能恢复背光，不能恢复 DRM 输出，所以关键是接管前屏幕必须已经亮着。
 
 设备上没有 SDL 视频驱动，所以真机走 LVGL 自带的 `lv_linux_fbdev`
 （`/dev/fb0`，480×320×32）+ `lv_evdev`（`/dev/input/event0`）。
