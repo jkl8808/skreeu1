@@ -18,7 +18,7 @@ It talks to Moonraker directly and keeps the stock services (unisrv / MQTT) runn
 - **喷嘴详情**：耗材卡、温度卡、自动预进料、喷嘴参数（0.2/0.4/0.6/0.8 + 标准/高流）、载入/退料
 - **调温浮层**：竖向滑块（松手才下发）、数字键盘、6 个可编辑快捷温度；喷嘴 `M104`、热床 `M140`
 - **更换耗材**：品牌列 + 28 色调色板 + 型号列表，支持自定义品牌和自定义类型
-- **控制页**：喷嘴 / 移动两个子标签；热床在喷嘴页底部，顶部有灯光开关按钮
+- **控制页**：喷嘴 / 移动 / 风扇三个子标签；热床在喷嘴页底部，顶部有灯光开关按钮
 - **维护页**：净化器、换头次数、喷嘴、空打检测、异物检测
 - **设置页**：设备信息（SN / 固件 / 喷嘴，从打印机读取）、7 项打印偏好、运行统计、灯光
 - 所有写操作都是**乐观更新**：先用本地值显示，轮询确认不上就 8 秒后弹提示并回退
@@ -34,10 +34,12 @@ It talks to Moonraker directly and keeps the stock services (unisrv / MQTT) runn
 | 首页 | 控制（喷嘴） | 控制（移动） |
 | --- | --- | --- |
 | ![首页](docs/screenshots/home.png) | ![控制](docs/screenshots/control.png) | ![移动](docs/screenshots/control-move.png) |
-| **打印控制** | **更换耗材** | **维护** |
-| ![打印控制](docs/screenshots/print-sheet.png) | ![更换耗材](docs/screenshots/materials.png) | ![维护](docs/screenshots/maintenance.png) |
-| **网络** | **Wi-Fi 密码** | **进料通知** |
-| ![网络](docs/screenshots/network.png) | ![Wi-Fi 密码](docs/screenshots/network-pass.png) | ![进料通知](docs/screenshots/feed.png) |
+| **控制（风扇）** | **控制（循环风扇）** | **打印控制** |
+| ![风扇](docs/screenshots/control-fan.png) | ![循环风扇](docs/screenshots/control-fan-2.png) | ![打印控制](docs/screenshots/print-sheet.png) |
+| **更换耗材** | **维护** | **网络** |
+| ![更换耗材](docs/screenshots/materials.png) | ![维护](docs/screenshots/maintenance.png) | ![网络](docs/screenshots/network.png) |
+| **Wi-Fi 密码** | **进料通知** |  |
+| ![Wi-Fi 密码](docs/screenshots/network-pass.png) | ![进料通知](docs/screenshots/feed.png) |  |
 
 喷嘴详情 / 调温 / 设置页：
 [nozzle.png](docs/screenshots/nozzle.png) ·
@@ -118,7 +120,8 @@ scripts/run_vnc.sh --host 192.168.1.50 --readonly
 | `--sheet N` | 截图时打开第 N 个喷嘴（0–3）的详情 |
 | `--temp` | 配合 `--sheet`，打开喷嘴调温浮层 |
 | `--bed` | 打开热床调温浮层 |
-| `--ctrl N` | 打开控制页并切到第 N 个子标签（0=喷嘴，1=移动） |
+| `--ctrl N` | 打开控制页并切到第 N 个子标签（0=喷嘴，1=移动，2=风扇） |
+| `--fan-page N` | 配合 `--ctrl 2`，切到风扇的第 N 页（0=模型/辅助，1=循环） |
 | `--print` | 打开打印控制浮层 |
 | `--keypad [--slot N]` | 打开数字键盘（`--slot` 为快捷温度槽位） |
 | `--picker` | 打开材料选择 |
@@ -193,9 +196,11 @@ DRM 显示控制器保持打开。
 
 ### 控制页
 
-- 顶部子标签：喷嘴 / 移动；右上角是腔体灯开关按钮
+- 顶部子标签：喷嘴 / 移动 / 风扇；右上角是腔体灯开关按钮
 - **喷嘴**：4 个喷嘴卡（点开详情、调温、换耗材），热床卡在最底下（点开调温）
 - **移动**：步进 1 / 10 / 50 mm，X/Y 点动、Z 升降、回零、关闭电机
+- **风扇**：第一页 模型（`fan`）+ 辅助（`cavity_fan`），第二页 循环（`circulation_fan`，仅顶盖版本有）
+  每页用滑条控制 0–100%，没有快捷数字
 - 移动前请先回零，未回零时 Klipper 会拒绝执行
 
 ### 喷嘴详情

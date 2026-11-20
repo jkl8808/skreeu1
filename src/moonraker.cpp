@@ -260,7 +260,8 @@ void Moonraker::poll_once() {
                       "&filament_motion_sensor%20e1_filament"
                       "&filament_motion_sensor%20e2_filament"
                       "&filament_motion_sensor%20e3_filament"
-                      "&led%20cavity_led";
+                      "&led%20cavity_led&fan"
+                      "&fan_generic%20cavity_fan&fan_generic%20circulation_fan";
 
     PrinterState next;
     if (!http_get(url, body)) {
@@ -339,6 +340,15 @@ void Moonraker::poll_once() {
             if (d.contains("clean_bed") && d["clean_bed"].is_object())
                 next.defect_sens = d["clean_bed"].value("sensitivity", "low");
         }
+
+        if (st.contains("fan") && st["fan"].is_object())
+            next.fan_speed = dget(st["fan"], "speed");
+        if (st.contains("fan_generic cavity_fan") &&
+            st["fan_generic cavity_fan"].is_object())
+            next.fan_aux_speed = dget(st["fan_generic cavity_fan"], "speed");
+        if (st.contains("fan_generic circulation_fan") &&
+            st["fan_generic circulation_fan"].is_object())
+            next.fan_circ_speed = dget(st["fan_generic circulation_fan"], "speed");
 
         if (st.contains("led cavity_led") && st["led cavity_led"].is_object()) {
             const json& l = st["led cavity_led"];

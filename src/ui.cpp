@@ -45,6 +45,7 @@ constexpr const char* IC_ARROW_DOWN = "\U000F072E";
 constexpr const char* IC_ARROW_LEFT = "\U000F0731";
 constexpr const char* IC_ARROW_RIGHT = "\U000F0734";
 constexpr const char* IC_POWER = "\U000F0425";
+constexpr const char* IC_FAN = "\U000F0210";
 constexpr const char* IC_CHEVRON_RIGHT = "\U000F0142";
 constexpr const char* IC_BACKSPACE = "\U000F0B5C";
 
@@ -113,6 +114,11 @@ std::string g_feed_err_seen;
 int g_ctrl_tab = 0;
 bool g_feed_dismissed = false;
 int g_move_step = 10;
+bool g_fan_pending[3] = {false, false, false};
+int g_fan_val[3] = {0, 0, 0};
+uint32_t g_fan_at[3] = {0, 0, 0};
+bool g_fan_dragging[3] = {false, false, false};
+int g_fan_page = 0;
 bool g_light_pending = false;
 bool g_light_val = false;
 uint32_t g_light_at = 0;
@@ -288,6 +294,12 @@ struct Refs {
     lv_obj_t* ctrl_light_btn = nullptr;
     lv_obj_t* ctrl_light_icon = nullptr;
     lv_obj_t* ctrl_light_text = nullptr;
+    lv_obj_t* ctrl_fan_pct[3] = {nullptr, nullptr, nullptr};
+    lv_obj_t* ctrl_fan_slider[3] = {nullptr, nullptr, nullptr};
+    lv_obj_t* ctrl_fan_icon[3] = {nullptr, nullptr, nullptr};
+    lv_obj_t* ctrl_fan_page0 = nullptr;
+    lv_obj_t* ctrl_fan_page1 = nullptr;
+    lv_obj_t* ctrl_fan_page_label = nullptr;
 
     // 进料/退料状态通知
     lv_obj_t* feed_banner = nullptr;
@@ -2401,9 +2413,9 @@ void build_print_sheet(lv_obj_t* screen) {
 
 void ctrl_tab_cb(lv_event_t* e) {
     int i = (int)(intptr_t)lv_event_get_user_data(e);
-    if (i < 0 || i > 1) return;
+    if (i < 0 || i > 2) return;
     g_ctrl_tab = i;
-    for (int j = 0; j < 2; j++) {
+    for (int j = 0; j < 3; j++) {
         if (!R.ctrl_tab[j]) continue;
         if (j == i) lv_obj_remove_flag(R.ctrl_tab[j], LV_OBJ_FLAG_HIDDEN);
         else lv_obj_add_flag(R.ctrl_tab[j], LV_OBJ_FLAG_HIDDEN);
@@ -2605,6 +2617,8 @@ void build_control_move(lv_obj_t* p) {
     lv_obj_t* zm = mk_button(zc, "Z-", false, move_axis_cb, (void*)(intptr_t)20, 0);
     lv_obj_set_flex_grow(zp, 0);
     lv_obj_set_flex_grow(zm, 0);
+    lv_obj_set_width(zp, LV_PCT(100));
+    lv_obj_set_width(zm, LV_PCT(100));
     lv_obj_set_height(zp, 80);
     lv_obj_set_height(zm, 80);
 
@@ -2619,6 +2633,145 @@ void build_control_move(lv_obj_t* p) {
     lv_obj_set_width(m84, 120);
 }
 
+const char* kFanName[3] = {"模型", "辅助", "循环"};
+const char* kFanObj[3] = {nullptr, "cavity_fan", "circulation_fan"};
+
+void fan_set_label(int idx, int pct) {
+    if (idx < 0 || idx > 2 || !R.ctrl_fan_pct[idx]) return;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d%%", pct);
+    lv_label_set_text(R.ctrl_fan_pct[idx], buf);
+}
+
+void fan_send(int idx, int pct) {
+    if (!MR || idx < 0 || idx > 2) return;
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    g_fan_pending[idx] = true;
+    g_fan_val[idx] = pct;
+    g_fan_at[idx] = lv_tick_get();
+    char cmd[64];
+    if (idx == 0)
+        snprintf(cmd, sizeof(cmd), "M106 S%d", pct * 255 / 100);
+    else
+        snprintf(cmd, sizeof(cmd), "SET_FAN_SPEED FAN=%s SPEED=%.2f", kFanObj[idx],
+                 pct / 100.0);
+    MR->send_gcode(cmd);
+    fan_set_label(idx, pct);
+}
+
+void fan_slider_cb(lv_event_t* e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code != LV_EVENT_VALUE_CHANGED && code != LV_EVENT_PRESSED &&
+        code != LV_EVENT_RELEASED)
+        return;
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    lv_obj_t* sl = static_cast<lv_obj_t*>(lv_event_get_target(e));
+    int v = (int)lv_slider_get_value(sl);
+    fan_set_label(idx, v);
+    if (code == LV_EVENT_PRESSED) g_fan_dragging[idx] = true;
+    else if (code == LV_EVENT_RELEASED) {
+        g_fan_dragging[idx] = false;
+        fan_send(idx, v);
+    }
+}
+
+void fan_page_apply(int page) {
+    if (page < 0) page = 0;
+    if (page > 1) page = 1;
+    g_fan_page = page;
+    if (R.ctrl_fan_page0) {
+        if (g_fan_page == 0) lv_obj_remove_flag(R.ctrl_fan_page0, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(R.ctrl_fan_page0, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (R.ctrl_fan_page1) {
+        if (g_fan_page == 1) lv_obj_remove_flag(R.ctrl_fan_page1, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(R.ctrl_fan_page1, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (R.ctrl_fan_page_label) {
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%d / 2", g_fan_page + 1);
+        lv_label_set_text(R.ctrl_fan_page_label, buf);
+    }
+}
+
+void fan_page_cb(lv_event_t* e) {
+    int d = (int)(intptr_t)lv_event_get_user_data(e);
+    fan_page_apply(g_fan_page + d);
+}
+
+lv_obj_t* mk_fan_card(lv_obj_t* parent, int idx) {
+    lv_obj_t* card = mk_card(parent, theme::SURFACE);
+    lv_obj_set_width(card, LV_PCT(100));
+    lv_obj_set_flex_grow(card, 1);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_all(card, 10, 0);
+    lv_obj_set_style_pad_row(card, 4, 0);
+
+    lv_obj_t* top = mk_obj(card);
+    lv_obj_set_size(top, LV_PCT(100), 28);
+    lv_obj_set_flex_flow(top, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(top, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(top, 8, 0);
+    R.ctrl_fan_icon[idx] = mk_icon(top, IC_FAN, 22, theme::MUTED);
+    mk_label(top, kFanName[idx], 15, true, theme::TEXT);
+    lv_obj_t* sp = mk_obj(top);
+    lv_obj_remove_flag(sp, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_flex_grow(sp, 1);
+    R.ctrl_fan_pct[idx] = mk_label(top, "0%", 22, true, theme::TEXT);
+
+    lv_obj_t* sl = lv_slider_create(card);
+    lv_obj_set_size(sl, LV_PCT(100), 20);
+    lv_slider_set_range(sl, 0, 100);
+    lv_slider_set_value(sl, 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(sl, theme::c(theme::SURFACE_HI), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(sl, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(sl, 999, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sl, theme::c(theme::PRIMARY), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(sl, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(sl, 999, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(sl, theme::c(0xFFFFFF), LV_PART_KNOB);
+    lv_obj_set_style_bg_opa(sl, LV_OPA_COVER, LV_PART_KNOB);
+    lv_obj_set_style_radius(sl, 999, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(sl, 4, LV_PART_KNOB);
+    lv_obj_add_event_cb(sl, fan_slider_cb, LV_EVENT_ALL, (void*)(intptr_t)idx);
+    R.ctrl_fan_slider[idx] = sl;
+    return card;
+}
+
+void build_control_fan(lv_obj_t* p) {
+    lv_obj_set_flex_flow(p, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(p, 6, 0);
+
+    R.ctrl_fan_page0 = mk_obj(p);
+    lv_obj_set_width(R.ctrl_fan_page0, LV_PCT(100));
+    lv_obj_set_flex_grow(R.ctrl_fan_page0, 1);
+    lv_obj_set_flex_flow(R.ctrl_fan_page0, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(R.ctrl_fan_page0, 6, 0);
+    mk_fan_card(R.ctrl_fan_page0, 0);
+    mk_fan_card(R.ctrl_fan_page0, 1);
+
+    R.ctrl_fan_page1 = mk_obj(p);
+    lv_obj_set_width(R.ctrl_fan_page1, LV_PCT(100));
+    lv_obj_set_flex_grow(R.ctrl_fan_page1, 1);
+    lv_obj_set_flex_flow(R.ctrl_fan_page1, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(R.ctrl_fan_page1, 6, 0);
+    mk_fan_card(R.ctrl_fan_page1, 2);
+    mk_label(R.ctrl_fan_page1, "循环风扇仅顶盖版本有", 11, false, theme::MUTED);
+    lv_obj_add_flag(R.ctrl_fan_page1, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t* fr = mk_obj(p);
+    lv_obj_set_size(fr, LV_PCT(100), 40);
+    lv_obj_set_flex_flow(fr, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(fr, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(fr, 10, 0);
+    mk_mini_button(fr, "<", fan_page_cb, (void*)(intptr_t)-1);
+    R.ctrl_fan_page_label = mk_label(fr, "1 / 2", 13, true, theme::MUTED);
+    mk_mini_button(fr, ">", fan_page_cb, (void*)(intptr_t)1);
+}
+
 void build_control(lv_obj_t* p) {
     lv_obj_set_flex_flow(p, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(p, 6, 0);
@@ -2627,8 +2780,8 @@ void build_control(lv_obj_t* p) {
     lv_obj_set_size(tabs, LV_PCT(100), 34);
     lv_obj_set_flex_flow(tabs, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_column(tabs, 6, 0);
-    const char* names[2] = {"喷嘴", "移动"};
-    for (int i = 0; i < 2; i++) {
+    const char* names[3] = {"喷嘴", "移动", "风扇"};
+    for (int i = 0; i < 3; i++) {
         R.ctrl_chip[i] = mk_chip(tabs, names[i], ctrl_tab_cb, (void*)(intptr_t)i, 0, 34);
         style_chip(R.ctrl_chip[i], i == 0);
     }
@@ -2654,13 +2807,14 @@ void build_control(lv_obj_t* p) {
     lv_obj_set_width(R.ctrl_body, LV_PCT(100));
     lv_obj_set_flex_grow(R.ctrl_body, 1);
 
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 3; i++) {
         R.ctrl_tab[i] = mk_obj(R.ctrl_body);
         lv_obj_set_size(R.ctrl_tab[i], LV_PCT(100), LV_PCT(100));
         if (i != 0) lv_obj_add_flag(R.ctrl_tab[i], LV_OBJ_FLAG_HIDDEN);
     }
     build_control_nozzles(R.ctrl_tab[0]);
     build_control_move(R.ctrl_tab[1]);
+    build_control_fan(R.ctrl_tab[2]);
 }
 
 void build_maintenance(lv_obj_t* p) {
@@ -2801,7 +2955,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.0 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.1 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）
@@ -3646,10 +3800,14 @@ void ui_open_print() {
     open_print_sheet_cb(nullptr);
 }
 
+void ui_fan_page(int p) {
+    fan_page_apply(p);
+}
+
 void ui_ctrl_tab(int i) {
-    if (i < 0 || i > 1) return;
+    if (i < 0 || i > 2) return;
     g_ctrl_tab = i;
-    for (int j = 0; j < 2; j++) {
+    for (int j = 0; j < 3; j++) {
         if (!R.ctrl_tab[j]) continue;
         if (j == i) lv_obj_remove_flag(R.ctrl_tab[j], LV_OBJ_FLAG_HIDDEN);
         else lv_obj_add_flag(R.ctrl_tab[j], LV_OBJ_FLAG_HIDDEN);
@@ -3873,6 +4031,28 @@ void ui_tick() {
             notice_error("温度设置未生效", "已恢复目标温度");
         }
     }
+    const double fan_state[3] = {s.fan_speed, s.fan_aux_speed, s.fan_circ_speed};
+    for (int fi = 0; fi < 3; fi++) {
+        int actual = (int)lround(fan_state[fi] * 100.0);
+        if (g_fan_pending[fi]) {
+            if (abs(actual - g_fan_val[fi]) <= 1) {
+                g_fan_pending[fi] = false;
+            } else if (lv_tick_get() - g_fan_at[fi] > 8000) {
+                g_fan_pending[fi] = false;
+                notice_error("风扇设置未生效", std::string(kFanName[fi]) + " 已恢复实际转速");
+            }
+        }
+        int show = g_fan_pending[fi] ? g_fan_val[fi] : actual;
+        fan_set_label(fi, show);
+        if (R.ctrl_fan_icon[fi])
+            lv_obj_set_style_text_color(
+                R.ctrl_fan_icon[fi],
+                theme::c(show > 0 ? theme::PRIMARY : theme::MUTED), 0);
+        if (R.ctrl_fan_slider[fi] && !g_fan_dragging[fi] && !g_fan_pending[fi] &&
+            (int)lv_slider_get_value(R.ctrl_fan_slider[fi]) != actual)
+            lv_slider_set_value(R.ctrl_fan_slider[fi], actual, LV_ANIM_OFF);
+    }
+
     if (MR->take_command_error())
         notice_error("命令发送失败", "检查打印机连接");
     for (int i = 0; i < 4; i++) {

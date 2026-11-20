@@ -16,6 +16,7 @@ void ui_open_bed_temp();        // 截图/调试用：打开半屏调温页（�
 void ui_open_net();             // 截图/调试用：打开网络面板
 void ui_open_print();           // 截图/调试用：打开打印控制浮层
 void ui_ctrl_tab(int i);        // 截图/调试用：切换控制页子标签
+void ui_fan_page(int p);        // 截图/调试用：切换风扇子页（0/1）
 void ui_open_keypad(int slot);  // 截图/调试用：打开数字键盘（slot>=0 编辑快捷温度）
 void ui_open_nozzle();          // 截图/调试用：打开喷嘴参数弹层
 void ui_open_color();           // 截图/调试用：打开颜色选择面板
