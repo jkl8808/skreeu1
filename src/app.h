@@ -69,6 +69,7 @@ struct PrinterState {
     double fan_speed = 0;       // 模型冷却
     double fan_aux_speed = 0;   // 辅助（cavity_fan）
     double fan_circ_speed = 0;  // 循环（circulation_fan）
+    std::string homed_axes;     // toolhead.homed_axes，如 "xyz"
     bool light_on = false;   // led cavity_led
 
     // purifier (Snapmaker U1)

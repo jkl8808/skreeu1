@@ -300,6 +300,8 @@ struct Refs {
     lv_obj_t* ctrl_fan_page0 = nullptr;
     lv_obj_t* ctrl_fan_page1 = nullptr;
     lv_obj_t* ctrl_fan_page_label = nullptr;
+    lv_obj_t* move_hint = nullptr;
+    lv_obj_t* move_btn[6] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
 
     // 进料/退料状态通知
     lv_obj_t* feed_banner = nullptr;
@@ -2438,6 +2440,17 @@ void move_axis_cb(lv_event_t* e) {
         send_action("G28");
         return;
     }
+    if (MR) {
+        PrinterState s = MR->snapshot();
+        const std::string& h = s.homed_axes;
+        bool homed = h.find('x') != std::string::npos &&
+                     h.find('y') != std::string::npos &&
+                     h.find('z') != std::string::npos;
+        if (!homed) {
+            notice_error("请先回零", "移动控制需要先执行回零");
+            return;
+        }
+    }
     int axis = v / 10;
     int dir = (v % 10) - 1;
     if (dir != -1 && dir != 1) return;
@@ -2606,6 +2619,12 @@ void build_control_move(lv_obj_t* p) {
             lv_obj_t* mb = mk_button(row, txt, code == 99, move_axis_cb,
                                      (void*)(intptr_t)code, 54);
             lv_obj_set_height(mb, LV_PCT(100));
+            int bi = -1;
+            if (code == 0) bi = 0;
+            else if (code == 2) bi = 1;
+            else if (code == 10) bi = 2;
+            else if (code == 12) bi = 3;
+            if (bi >= 0) R.move_btn[bi] = mb;
         }
     }
 
@@ -2617,6 +2636,8 @@ void build_control_move(lv_obj_t* p) {
     lv_obj_t* zm = mk_button(zc, "Z-", false, move_axis_cb, (void*)(intptr_t)20, 0);
     lv_obj_set_flex_grow(zp, 0);
     lv_obj_set_flex_grow(zm, 0);
+    R.move_btn[5] = zp;
+    R.move_btn[4] = zm;
     lv_obj_set_width(zp, LV_PCT(100));
     lv_obj_set_width(zm, LV_PCT(100));
     lv_obj_set_height(zp, 80);
@@ -2627,7 +2648,7 @@ void build_control_move(lv_obj_t* p) {
     lv_obj_set_flex_flow(br, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(br, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
-    mk_label(br, "移动前请先回零", 11, false, theme::MUTED);
+    R.move_hint = mk_label(br, "未回零：请先点回零", 11, false, theme::MUTED);
     lv_obj_t* m84 = mk_button(br, "关闭电机", false, action_cb, (void*)"M84", 40);
     lv_obj_set_flex_grow(m84, 0);
     lv_obj_set_width(m84, 120);
@@ -2955,7 +2976,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.1 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.2 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）
@@ -4053,6 +4074,18 @@ void ui_tick() {
             lv_slider_set_value(R.ctrl_fan_slider[fi], actual, LV_ANIM_OFF);
     }
 
+    {
+        const std::string& h = s.homed_axes;
+        bool homed = h.find('x') != std::string::npos &&
+                     h.find('y') != std::string::npos &&
+                     h.find('z') != std::string::npos;
+        for (int i = 0; i < 6; i++) set_disabled(R.move_btn[i], !homed);
+        if (R.move_hint) {
+            lv_label_set_text(R.move_hint, homed ? "已回零" : "未回零：请先点回零");
+            lv_obj_set_style_text_color(
+                R.move_hint, theme::c(homed ? theme::SUCCESS : theme::MUTED), 0);
+        }
+    }
     if (MR->take_command_error())
         notice_error("命令发送失败", "检查打印机连接");
     for (int i = 0; i < 4; i++) {

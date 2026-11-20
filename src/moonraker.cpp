@@ -341,6 +341,9 @@ void Moonraker::poll_once() {
                 next.defect_sens = d["clean_bed"].value("sensitivity", "low");
         }
 
+        if (st.contains("toolhead") && st["toolhead"].is_object())
+            next.homed_axes = st["toolhead"].value("homed_axes", "");
+
         if (st.contains("fan") && st["fan"].is_object())
             next.fan_speed = dget(st["fan"], "speed");
         if (st.contains("fan_generic cavity_fan") &&
