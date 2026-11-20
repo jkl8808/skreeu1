@@ -13,31 +13,36 @@ It talks to Moonraker directly and keeps the stock services (unisrv / MQTT) runn
 
 ## 特性
 
-- **4 页导航**：首页 / 打印 / 维护 / 设置，左侧悬浮胶囊导航（可用 `SKREEU1_RAIL=right` 换到右侧）
-- **首页**：打印状态卡、热床卡（点开调温）、4 个喷嘴大卡片（温度、目标、耗材颜色/类型、NFC 标识）
+- **4 页导航**：首页 / 控制 / 维护 / 设置，左侧悬浮胶囊导航（可用 `SKREEU1_RAIL=right` 换到右侧）
+- **首页**：大状态卡 + 暂停/继续/停止，点「打印控制」看速度倍率 / Z-offset
 - **喷嘴详情**：耗材卡、温度卡、自动预进料、喷嘴参数（0.2/0.4/0.6/0.8 + 标准/高流）、载入/退料
 - **调温浮层**：竖向滑块（松手才下发）、数字键盘、6 个可编辑快捷温度；喷嘴 `M104`、热床 `M140`
 - **更换耗材**：品牌列 + 28 色调色板 + 型号列表，支持自定义品牌和自定义类型
-- **打印页**：进度环、速度倍率、Z-offset、暂停/继续/取消
+- **控制页**：喷嘴 / 移动两个子标签；热床在喷嘴页底部，顶部有灯光开关按钮
 - **维护页**：净化器、换头次数、喷嘴、空打检测、异物检测
 - **设置页**：设备信息（SN / 固件 / 喷嘴，从打印机读取）、7 项打印偏好、运行统计、灯光
 - 所有写操作都是**乐观更新**：先用本地值显示，轮询确认不上就 8 秒后弹提示并回退
 - 空闲 5 分钟自动熄屏（只关背光、保持显示输出），触摸一下立即亮起，不会误点界面
 - Wi-Fi 管理：扫描、连接（WPA2/WPA3/开放网络）、断开，显示 SSID / IP / 信号强度
-- 首页顶部「灯光」开关，直接控制腔体灯（`led cavity_led`），状态从打印机读取
+- 控制页右上角「灯光」按钮，直接控制腔体灯（`led cavity_led`），状态从打印机读取
 - 每个喷嘴卡右下角有「工具头 + 耗材」小图标：橙色=已进到挤出机，灰色=未进料（预加载也算未进料），转圈=进料/退料中，红色=失败
-- 进料/退料时顶部显示圆角状态通知（旋转动画 + 当前阶段）；所有乐观更新失败也复用这个通知
+- 进料/退料时顶部显示圆角状态通知（旋转动画 + 当前阶段），**上滑可以临时隐藏**；所有乐观更新失败也复用这个通知
 - 中文用 FreeType 运行时渲染，不预烘焙字库；整屏强制重绘约 2ms/帧，空闲 CPU ≈1%
 
 ## 截图
 
-| 首页 | 喷嘴详情 | 调温 |
+| 首页 | 控制（喷嘴） | 控制（移动） |
 | --- | --- | --- |
-| ![首页](docs/screenshots/home.png) | ![喷嘴详情](docs/screenshots/nozzle.png) | ![调温](docs/screenshots/temp.png) |
-| **更换耗材** | **打印** | **维护** |
-| ![更换耗材](docs/screenshots/materials.png) | ![打印](docs/screenshots/print.png) | ![维护](docs/screenshots/maintenance.png) |
+| ![首页](docs/screenshots/home.png) | ![控制](docs/screenshots/control.png) | ![移动](docs/screenshots/control-move.png) |
+| **打印控制** | **更换耗材** | **维护** |
+| ![打印控制](docs/screenshots/print-sheet.png) | ![更换耗材](docs/screenshots/materials.png) | ![维护](docs/screenshots/maintenance.png) |
 | **网络** | **Wi-Fi 密码** | **进料通知** |
 | ![网络](docs/screenshots/network.png) | ![Wi-Fi 密码](docs/screenshots/network-pass.png) | ![进料通知](docs/screenshots/feed.png) |
+
+喷嘴详情 / 调温 / 设置页：
+[nozzle.png](docs/screenshots/nozzle.png) ·
+[temp.png](docs/screenshots/temp.png) ·
+[settings.png](docs/screenshots/settings.png)
 
 设置页：[docs/screenshots/settings.png](docs/screenshots/settings.png)
 
@@ -113,6 +118,8 @@ scripts/run_vnc.sh --host 192.168.1.50 --readonly
 | `--sheet N` | 截图时打开第 N 个喷嘴（0–3）的详情 |
 | `--temp` | 配合 `--sheet`，打开喷嘴调温浮层 |
 | `--bed` | 打开热床调温浮层 |
+| `--ctrl N` | 打开控制页并切到第 N 个子标签（0=喷嘴，1=移动） |
+| `--print` | 打开打印控制浮层 |
 | `--keypad [--slot N]` | 打开数字键盘（`--slot` 为快捷温度槽位） |
 | `--picker` | 打开材料选择 |
 | `--nozzle` | 打开喷嘴参数弹层 |
@@ -179,13 +186,21 @@ DRM 显示控制器保持打开。
 
 ### 首页
 
-- 点热床卡 → 热床调温浮层
-- 点任意喷嘴卡 → 喷嘴详情
-- 状态卡显示当前打印进度、文件名、用时、耗材
+- 状态卡：打印进度、文件名、用时、耗材
+- 暂停 / 继续 / 停止：打印中可用
+- 「打印控制」按钮：打开速度倍率 / Z-offset / 进度浮层
+- 顶部通知可以**上滑隐藏**，进料结束后自动恢复
+
+### 控制页
+
+- 顶部子标签：喷嘴 / 移动；右上角是腔体灯开关按钮
+- **喷嘴**：4 个喷嘴卡（点开详情、调温、换耗材），热床卡在最底下（点开调温）
+- **移动**：步进 1 / 10 / 50 mm，X/Y 点动、Z 升降、回零、关闭电机
+- 移动前请先回零，未回零时 Klipper 会拒绝执行
 
 ### 喷嘴详情
 
-左侧耗材卡（颜色、类型、厂商、NFC 卡型与建议温度），右侧温度卡，下面自动预进料和喷嘴参数，
+从控制页点喷嘴卡进入。左侧耗材卡（颜色、类型、厂商、NFC 卡型与建议温度），右侧温度卡，下面自动预进料和喷嘴参数，
 底部是载入 / 退料 / 完成。
 
 - 点温度卡 → 调温浮层

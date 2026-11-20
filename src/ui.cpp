@@ -39,6 +39,12 @@ constexpr const char* IC_LOCK = "\U000F033E";
 constexpr const char* IC_REFRESH = "\U000F0450";
 constexpr const char* IC_CHECK_CIRCLE = "\U000F05E0";
 constexpr const char* IC_TOOLHEAD = "\U000F0E5B";  // printer-3d-nozzle
+constexpr const char* IC_CONTROL = "\U000F0297";  // gamepad-variant
+constexpr const char* IC_ARROW_UP = "\U000F0737";
+constexpr const char* IC_ARROW_DOWN = "\U000F072E";
+constexpr const char* IC_ARROW_LEFT = "\U000F0731";
+constexpr const char* IC_ARROW_RIGHT = "\U000F0734";
+constexpr const char* IC_POWER = "\U000F0425";
 constexpr const char* IC_CHEVRON_RIGHT = "\U000F0142";
 constexpr const char* IC_BACKSPACE = "\U000F0B5C";
 
@@ -76,7 +82,9 @@ const uint32_t kPalette[28] = {
 void update_sheet();
 void update_nozzle_page();
 void show_toast(const char* msg);
-void light_toggle_cb(lv_event_t* e);
+void open_print_sheet_cb(lv_event_t* e);
+void ctrl_tab_cb(lv_event_t* e);
+void ctrl_light_cb(lv_event_t* e);
 std::string feed_title(const std::string& act, bool finished, bool failed, int tool);
 void feed_banner_set(bool error, bool success, const char* icon, const char* title,
                      const char* sub);
@@ -84,6 +92,8 @@ void feed_tick(const PrinterState& s);
 void notice_show(bool error, bool success, const char* icon, const std::string& title,
                  const std::string& sub, uint32_t duration_ms);
 void notice_error(const std::string& title, const std::string& sub);
+void update_feed_banner_pos();
+void feed_banner_gesture_cb(lv_event_t* e);
 void open_net_page();
 void net_card_cb(lv_event_t* e);
 
@@ -100,6 +110,9 @@ uint32_t g_feed_done_until = 0;
 uint32_t g_notice_until = 0;   // 顶部通知的显示截止时间（0 表示由 feed 持续占用）
 std::string g_feed_err_seen;
 
+int g_ctrl_tab = 0;
+bool g_feed_dismissed = false;
+int g_move_step = 10;
 bool g_light_pending = false;
 bool g_light_val = false;
 uint32_t g_light_at = 0;
@@ -258,10 +271,23 @@ struct Refs {
     lv_obj_t* def_group_sw[4] = {nullptr, nullptr, nullptr, nullptr};
     lv_obj_t* def_seg[2] = {nullptr, nullptr};
 
-    // 首页灯光
-    lv_obj_t* home_light = nullptr;
-    lv_obj_t* home_light_icon = nullptr;
-    lv_obj_t* home_light_text = nullptr;
+    // 首页快捷打印
+    lv_obj_t* home_pause_btn = nullptr;
+    lv_obj_t* home_resume_btn = nullptr;
+    lv_obj_t* home_stop_btn = nullptr;
+    lv_obj_t* home_print_btn = nullptr;
+
+    // 打印控制浮层
+    lv_obj_t* print_sheet = nullptr;
+
+    // 控制页
+    lv_obj_t* ctrl_body = nullptr;
+    lv_obj_t* ctrl_tab[3] = {nullptr, nullptr, nullptr};
+    lv_obj_t* ctrl_chip[3] = {nullptr, nullptr, nullptr};
+    lv_obj_t* ctrl_step_chip[3] = {nullptr, nullptr, nullptr};
+    lv_obj_t* ctrl_light_btn = nullptr;
+    lv_obj_t* ctrl_light_icon = nullptr;
+    lv_obj_t* ctrl_light_text = nullptr;
 
     // 进料/退料状态通知
     lv_obj_t* feed_banner = nullptr;
@@ -392,6 +418,13 @@ void apply_toggle(lv_obj_t* sw, bool on) {
         lv_obj_set_style_bg_color(knob, theme::c(on ? 0xFFFFFF : theme::TEXT), 0);
         lv_obj_align(knob, on ? LV_ALIGN_RIGHT_MID : LV_ALIGN_LEFT_MID, on ? -3 : 3, 0);
     }
+}
+
+void set_disabled(lv_obj_t* b, bool dis) {
+    if (!b) return;
+    lv_obj_set_style_opa(b, dis ? LV_OPA_40 : LV_OPA_COVER, 0);
+    if (dis) lv_obj_add_state(b, LV_STATE_DISABLED);
+    else lv_obj_remove_state(b, LV_STATE_DISABLED);
 }
 
 // 自绘 M3 开关（LVGL 默认 switch 在 480×320 上比例不合适）
@@ -846,18 +879,18 @@ void show_toast(const char* msg) {
 }
 
 void apply_light_ui(bool on) {
-    if (!R.home_light) return;
-    lv_obj_set_style_bg_color(R.home_light,
-                              theme::c(on ? theme::PRIMARY_DIM : theme::SURFACE_HI), 0);
-    if (R.home_light_icon)
-        lv_obj_set_style_text_color(R.home_light_icon,
+    if (R.ctrl_light_btn)
+        lv_obj_set_style_bg_color(R.ctrl_light_btn,
+                                  theme::c(on ? theme::PRIMARY_DIM : theme::SURFACE_HI), 0);
+    if (R.ctrl_light_icon)
+        lv_obj_set_style_text_color(R.ctrl_light_icon,
                                     theme::c(on ? theme::PRIMARY : theme::MUTED), 0);
-    if (R.home_light_text)
-        lv_obj_set_style_text_color(R.home_light_text,
+    if (R.ctrl_light_text)
+        lv_obj_set_style_text_color(R.ctrl_light_text,
                                     theme::c(on ? theme::TEXT : theme::MUTED), 0);
 }
 
-void light_toggle_cb(lv_event_t*) {
+void ctrl_light_cb(lv_event_t*) {
     if (!MR) return;
     PrinterState s = MR->snapshot();
     bool cur = g_light_pending ? g_light_val : s.light_on;
@@ -1447,6 +1480,7 @@ void update_nozzle_page() {
 void load_filament_cb(lv_event_t*) {
     if (!MR || g_sheet_tool < 0) return;
     MR->send_gcode("AUTO_FEEDING EXTRUDER=" + std::to_string(g_sheet_tool) + " LOAD=1");
+    g_feed_dismissed = false;
     g_feed_local = true;
     g_feed_local_tool = g_sheet_tool;
     g_feed_local_kind = 1;
@@ -1463,6 +1497,7 @@ void unload_filament_cb(lv_event_t*) {
     std::string n = std::to_string(g_sheet_tool);
     MR->send_gcode("AUTO_FEEDING EXTRUDER=" + n + " UNLOAD=1 STAGE=prepare\n" +
                    "AUTO_FEEDING EXTRUDER=" + n + " UNLOAD=1 STAGE=doing");
+    g_feed_dismissed = false;
     g_feed_local = true;
     g_feed_local_tool = g_sheet_tool;
     g_feed_local_kind = 2;
@@ -1486,6 +1521,7 @@ void hide_sheets() {
     if (R.color_page) lv_obj_add_flag(R.color_page, LV_OBJ_FLAG_HIDDEN);
     if (R.color_scrim) lv_obj_add_flag(R.color_scrim, LV_OBJ_FLAG_HIDDEN);
     if (R.net_page) lv_obj_add_flag(R.net_page, LV_OBJ_FLAG_HIDDEN);
+    if (R.print_sheet) lv_obj_add_flag(R.print_sheet, LV_OBJ_FLAG_HIDDEN);
     if (R.net_pw_page) lv_obj_add_flag(R.net_pw_page, LV_OBJ_FLAG_HIDDEN);
     g_net_open = false;
     g_net_pw_open = false;
@@ -2205,31 +2241,12 @@ void build_home(lv_obj_t* p) {
     lv_obj_set_flex_flow(p, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(p, 6, 0);
 
-    // header
     lv_obj_t* head = mk_obj(p);
     lv_obj_set_size(head, LV_PCT(100), 26);
     lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(head, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
     mk_label(head, "Snapmaker U1", 20, true, theme::TEXT);
-
-    lv_obj_t* lb = lv_button_create(head);
-    lv_obj_set_size(lb, LV_SIZE_CONTENT, 26);
-    lv_obj_set_style_radius(lb, 999, 0);
-    lv_obj_set_style_bg_color(lb, theme::c(theme::SURFACE_HI), 0);
-    lv_obj_set_style_bg_opa(lb, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(lb, 0, 0);
-    lv_obj_set_style_shadow_width(lb, 0, 0);
-    lv_obj_set_style_pad_hor(lb, 8, 0);
-    lv_obj_set_style_pad_ver(lb, 2, 0);
-    lv_obj_set_flex_flow(lb, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(lb, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(lb, 4, 0);
-    R.home_light_icon = mk_icon(lb, IC_LIGHT, 15, theme::MUTED);
-    R.home_light_text = mk_label(lb, "灯光", 12, false, theme::MUTED);
-    lv_obj_add_event_cb(lb, light_toggle_cb, LV_EVENT_CLICKED, nullptr);
-    R.home_light = lb;
 
     lv_obj_t* chip = mk_obj(head);
     lv_obj_set_size(chip, LV_SIZE_CONTENT, 28);
@@ -2240,66 +2257,194 @@ void build_home(lv_obj_t* p) {
     R.conn_state = mk_label(chip, "连接中", 13, false, theme::MUTED);
     lv_obj_center(R.conn_state);
 
-    // 状态卡 + 热床卡
-    lv_obj_t* srow = mk_obj(p);
-    lv_obj_set_size(srow, LV_PCT(100), 112);
-    lv_obj_set_flex_flow(srow, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(srow, 8, 0);
-
-    R.status_card = mk_card(srow, theme::SURFACE_HI);
-    lv_obj_set_height(R.status_card, LV_PCT(100));
-    lv_obj_set_flex_grow(R.status_card, 1);
+    // 大状态卡：点开打印控制浮层
+    R.status_card = mk_card(p, theme::SURFACE_HI);
+    lv_obj_set_size(R.status_card, LV_PCT(100), 190);
     lv_obj_set_flex_flow(R.status_card, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(R.status_card, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(R.status_card, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_add_flag(R.status_card, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(R.status_card, open_print_sheet_cb, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* left = mk_obj(R.status_card);
+    lv_obj_remove_flag(left, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_height(left, LV_SIZE_CONTENT);
     lv_obj_set_flex_grow(left, 1);
     lv_obj_set_style_pad_right(left, 8, 0);
     lv_obj_set_flex_flow(left, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(left, 2, 0);
-    R.status_title = mk_label(left, "待机", 24, true, theme::TEXT);
+    R.status_title = mk_label(left, "待机", 26, true, theme::TEXT);
     R.status_sub = mk_label(left, "准备就绪", 14, false, theme::MUTED);
     lv_obj_set_width(R.status_sub, LV_PCT(100));
     lv_label_set_long_mode(R.status_sub, LV_LABEL_LONG_MODE_DOTS);
     R.status_sub2 = mk_label(left, "", 13, false, theme::MUTED);
     lv_obj_set_width(R.status_sub2, LV_PCT(100));
     lv_label_set_long_mode(R.status_sub2, LV_LABEL_LONG_MODE_DOTS);
+    mk_label(left, "速度 / Z-offset 在「打印控制」", 10, false, theme::MUTED);
 
     R.status_arc = lv_arc_create(R.status_card);
-    lv_obj_set_size(R.status_arc, 84, 84);
+    lv_obj_set_size(R.status_arc, 104, 104);
     lv_arc_set_rotation(R.status_arc, 135);
     lv_arc_set_bg_angles(R.status_arc, 0, 270);
     lv_arc_set_range(R.status_arc, 0, 1000);
-    lv_obj_set_style_arc_width(R.status_arc, 7, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(R.status_arc, 7, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(R.status_arc, 8, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(R.status_arc, 8, LV_PART_INDICATOR);
     lv_obj_set_style_arc_color(R.status_arc, theme::c(theme::OUTLINE), LV_PART_MAIN);
     lv_obj_set_style_arc_color(R.status_arc, theme::c(theme::PRIMARY), LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(R.status_arc, LV_OPA_TRANSP, LV_PART_KNOB);
     lv_obj_remove_flag(R.status_arc, LV_OBJ_FLAG_CLICKABLE);
-    R.status_pct = mk_label(R.status_arc, "0%", 16, true, theme::TEXT);
+    R.status_pct = mk_label(R.status_arc, "0%", 20, true, theme::TEXT);
     lv_obj_center(R.status_pct);
 
-    // 热床卡片：点开调温（和喷嘴同一个浮层，滑块上限 120°C）
-    lv_obj_t* bed = mk_card(srow, theme::SURFACE);
-    lv_obj_set_size(bed, 92, LV_PCT(100));
-    lv_obj_set_style_pad_all(bed, 8, 0);
-    lv_obj_set_flex_flow(bed, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(bed, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-    lv_obj_add_flag(bed, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(bed, open_bed_temp_cb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* bicon = mk_icon(bed, IC_BED, 20, theme::PRIMARY);
-    lv_obj_set_style_pad_top(bicon, 2, 0);
-    lv_obj_t* blabel = mk_label(bed, "热床", 12, false, theme::MUTED);
-    (void)blabel;
-    R.temp_bed = mk_label(bed, "--", 24, true, theme::TEXT);
-    R.bed_target = mk_label(bed, "未加热", 11, false, theme::MUTED);
+    lv_obj_t* quick = mk_obj(p);
+    lv_obj_set_size(quick, LV_PCT(100), 46);
+    lv_obj_set_flex_flow(quick, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(quick, 8, 0);
+    R.home_pause_btn = mk_button(quick, "暂停", false, action_cb, (void*)"PAUSE", 46);
+    R.home_resume_btn = mk_button(quick, "继续", false, action_cb, (void*)"RESUME", 46);
+    R.home_stop_btn = mk_button(quick, "停止", true, action_cb, (void*)"CANCEL_PRINT", 46);
+    R.home_print_btn = mk_button(quick, "打印控制", false, open_print_sheet_cb, nullptr, 46);
+}
 
-    // 喷嘴卡片：温度 / 颜色 / 类型（NFC 识别时带图标），点开看详情
+// 点首页状态卡打开的打印控制浮层
+void open_print_sheet_cb(lv_event_t*) {
+    if (!R.print_sheet) return;
+    lv_obj_remove_flag(R.print_sheet, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_to_index(R.print_sheet, -1);
+}
+
+void build_print_sheet(lv_obj_t* screen) {
+    lv_obj_t* sh = mk_overlay(screen);
+    R.print_sheet = sh;
+
+    lv_obj_t* head = mk_obj(sh);
+    lv_obj_set_size(head, LV_PCT(100), 30);
+    lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    mk_label(head, "打印控制", 20, true, theme::TEXT);
+    mk_close_button(head, [](lv_event_t*) {
+        if (R.print_sheet) lv_obj_add_flag(R.print_sheet, LV_OBJ_FLAG_HIDDEN);
+    });
+
+    lv_obj_t* body = mk_obj(sh);
+    lv_obj_set_width(body, LV_PCT(100));
+    lv_obj_set_flex_grow(body, 1);
+
+    lv_obj_t* card = mk_card(body);
+    lv_obj_set_size(card, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+
+    R.print_arc = lv_arc_create(card);
+    lv_obj_set_size(R.print_arc, 104, 104);
+    lv_arc_set_rotation(R.print_arc, 135);
+    lv_arc_set_bg_angles(R.print_arc, 0, 270);
+    lv_arc_set_range(R.print_arc, 0, 1000);
+    lv_obj_set_style_arc_width(R.print_arc, 9, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(R.print_arc, 9, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(R.print_arc, theme::c(theme::OUTLINE), LV_PART_MAIN);
+    lv_obj_set_style_arc_color(R.print_arc, theme::c(theme::PRIMARY), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(R.print_arc, LV_OPA_TRANSP, LV_PART_KNOB);
+    lv_obj_remove_flag(R.print_arc, LV_OBJ_FLAG_CLICKABLE);
+    R.print_pct = mk_label(R.print_arc, "0%", 24, true, theme::TEXT);
+    lv_obj_center(R.print_pct);
+
+    lv_obj_t* right = mk_obj(card);
+    lv_obj_set_height(right, LV_PCT(100));
+    lv_obj_set_flex_grow(right, 1);
+    lv_obj_set_flex_flow(right, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(right, 6, 0);
+    mk_label(right, "正在打印", 13, false, theme::MUTED);
+    R.print_file = mk_label(right, "—", 16, true, theme::TEXT);
+    lv_label_set_long_mode(R.print_file, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_width(R.print_file, LV_PCT(100));
+    R.print_meta = mk_label(right, "—", 13, false, theme::MUTED);
+
+    lv_obj_t* tune1 = mk_obj(right);
+    lv_obj_set_size(tune1, LV_PCT(100), 36);
+    lv_obj_set_flex_flow(tune1, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(tune1, 6, 0);
+    lv_obj_set_flex_align(tune1, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    mk_mini_button(tune1, "-", speed_step_cb, (void*)(intptr_t)-1);
+    R.speed_label = mk_label(tune1, "100%", 14, true, theme::TEXT);
+    lv_obj_set_width(R.speed_label, 52);
+    lv_obj_set_style_text_align(R.speed_label, LV_TEXT_ALIGN_CENTER, 0);
+    mk_mini_button(tune1, "+", speed_step_cb, (void*)(intptr_t)1);
+
+    lv_obj_t* tune2 = mk_obj(right);
+    lv_obj_set_size(tune2, LV_PCT(100), 36);
+    lv_obj_set_flex_flow(tune2, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(tune2, 6, 0);
+    lv_obj_set_flex_align(tune2, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    mk_mini_button(tune2, "Z-", z_step_cb, (void*)(intptr_t)-1);
+    R.zoff_label = mk_label(tune2, "0.00", 14, true, theme::TEXT);
+    lv_obj_set_width(R.zoff_label, 56);
+    lv_obj_set_style_text_align(R.zoff_label, LV_TEXT_ALIGN_CENTER, 0);
+    mk_mini_button(tune2, "Z+", z_step_cb, (void*)(intptr_t)1);
+
+    R.print_temps = mk_label(right, "—", 12, false, theme::MUTED);
+
+    lv_obj_t* btns = mk_obj(right);
+    lv_obj_set_size(btns, LV_PCT(100), 40);
+    lv_obj_set_flex_flow(btns, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(btns, 8, 0);
+    mk_button(btns, "暂停", false, action_cb, (void*)"PAUSE", 40);
+    mk_button(btns, "继续", false, action_cb, (void*)"RESUME", 40);
+    mk_button(btns, "取消", true, action_cb, (void*)"CANCEL_PRINT", 40);
+}
+
+// ---------------------------------------------------------------- 控制页
+
+void ctrl_tab_cb(lv_event_t* e) {
+    int i = (int)(intptr_t)lv_event_get_user_data(e);
+    if (i < 0 || i > 1) return;
+    g_ctrl_tab = i;
+    for (int j = 0; j < 2; j++) {
+        if (!R.ctrl_tab[j]) continue;
+        if (j == i) lv_obj_remove_flag(R.ctrl_tab[j], LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(R.ctrl_tab[j], LV_OBJ_FLAG_HIDDEN);
+        style_chip(R.ctrl_chip[j], j == i);
+    }
+}
+
+void ctrl_step_cb(lv_event_t* e) {
+    int step = (int)(intptr_t)lv_event_get_user_data(e);
+    if (step <= 0) return;
+    g_move_step = step;
+    for (int i = 0; i < 3; i++)
+        style_chip(R.ctrl_step_chip[i], (i == 0 && step == 1) || (i == 1 && step == 10) ||
+                                           (i == 2 && step == 50));
+}
+
+void move_axis_cb(lv_event_t* e) {
+    int v = (int)(intptr_t)lv_event_get_user_data(e);
+    if (v == 99) {
+        send_action("G28");
+        return;
+    }
+    int axis = v / 10;
+    int dir = (v % 10) - 1;
+    if (dir != -1 && dir != 1) return;
+    char cmd[96];
+    if (axis == 2)
+        snprintf(cmd, sizeof(cmd), "G91\nG1 Z%d F600\nG90", dir * g_move_step);
+    else
+        snprintf(cmd, sizeof(cmd), "G91\nG1 %c%d F3000\nG90", axis == 0 ? 'X' : 'Y',
+                 dir * g_move_step);
+    send_action(cmd);
+}
+
+void build_control_nozzles(lv_obj_t* p) {
+    lv_obj_set_flex_flow(p, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(p, 6, 0);
+
     lv_obj_t* nrow = mk_obj(p);
-    lv_obj_set_size(nrow, LV_PCT(100), 130);
+    lv_obj_set_width(nrow, LV_PCT(100));
+    lv_obj_set_flex_grow(nrow, 1);
     lv_obj_set_flex_flow(nrow, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_column(nrow, 6, 0);
 
@@ -2349,6 +2494,7 @@ void build_home(lv_obj_t* p) {
         lv_label_set_long_mode(R.nozzle_target[i], LV_LABEL_LONG_MODE_DOTS);
 
         lv_obj_t* mrow = mk_obj(card);
+        lv_obj_remove_flag(mrow, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_size(mrow, LV_PCT(100), 20);
         lv_obj_set_flex_flow(mrow, LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(mrow, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
@@ -2359,7 +2505,6 @@ void build_home(lv_obj_t* p) {
         lv_obj_set_flex_grow(R.nozzle_mat[i], 1);
         lv_label_set_long_mode(R.nozzle_mat[i], LV_LABEL_LONG_MODE_DOTS);
 
-        // 工具头 + 耗材线：表示有没有进到挤出机
         lv_obj_t* fi = mk_obj(mrow);
         lv_obj_set_size(fi, 18, 20);
         lv_obj_remove_flag(fi, LV_OBJ_FLAG_CLICKABLE);
@@ -2377,80 +2522,145 @@ void build_home(lv_obj_t* p) {
         R.nozzle_feed_head[i] = fh;
     }
 
-    // 热床卡宽度跟喷嘴卡对齐（4 等分会取整，所以布局后取实际宽度）
-    lv_obj_update_layout(p);
-    if (bed && R.nozzle_card[3]) {
-        lv_obj_set_width(bed, lv_obj_get_width(R.nozzle_card[3]));
-        lv_obj_update_layout(p);
-    }
+    lv_obj_t* bed = mk_card(p, theme::SURFACE);
+    lv_obj_set_size(bed, LV_PCT(100), 58);
+    lv_obj_set_style_pad_all(bed, 10, 0);
+    lv_obj_set_flex_flow(bed, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(bed, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(bed, 8, 0);
+    lv_obj_add_flag(bed, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(bed, open_bed_temp_cb, LV_EVENT_CLICKED, nullptr);
+    mk_icon(bed, IC_BED, 22, theme::PRIMARY);
+    mk_label(bed, "热床", 13, false, theme::MUTED);
+    lv_obj_t* sp = mk_obj(bed);
+    lv_obj_remove_flag(sp, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_flex_grow(sp, 1);
+    R.temp_bed = mk_label(bed, "--", 24, true, theme::TEXT);
+    R.bed_target = mk_label(bed, "未加热", 11, false, theme::MUTED);
+    mk_icon(bed, IC_CHEVRON_RIGHT, 18, theme::MUTED);
+
 }
 
-void build_print(lv_obj_t* p) {
+void build_control_move(lv_obj_t* p) {
     lv_obj_set_flex_flow(p, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(p, 8, 0);
+    lv_obj_set_style_pad_row(p, 6, 0);
 
-    lv_obj_t* card = mk_card(p);
-    lv_obj_set_size(card, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+    lv_obj_t* sr = mk_obj(p);
+    lv_obj_set_size(sr, LV_PCT(100), 34);
+    lv_obj_set_flex_flow(sr, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(sr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(sr, 6, 0);
+    mk_label(sr, "步进", 12, false, theme::MUTED);
+    R.ctrl_step_chip[0] = mk_chip(sr, "1", ctrl_step_cb, (void*)(intptr_t)1, 0, 34);
+    R.ctrl_step_chip[1] = mk_chip(sr, "10", ctrl_step_cb, (void*)(intptr_t)10, 0, 34);
+    R.ctrl_step_chip[2] = mk_chip(sr, "50", ctrl_step_cb, (void*)(intptr_t)50, 0, 34);
+    style_chip(R.ctrl_step_chip[1], true);
 
-    R.print_arc = lv_arc_create(card);
-    lv_obj_set_size(R.print_arc, 116, 116);
-    lv_arc_set_rotation(R.print_arc, 135);
-    lv_arc_set_bg_angles(R.print_arc, 0, 270);
-    lv_arc_set_range(R.print_arc, 0, 1000);
-    lv_obj_set_style_arc_width(R.print_arc, 10, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(R.print_arc, 10, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(R.print_arc, theme::c(theme::OUTLINE), LV_PART_MAIN);
-    lv_obj_set_style_arc_color(R.print_arc, theme::c(theme::PRIMARY), LV_PART_INDICATOR);
-    lv_obj_set_style_bg_opa(R.print_arc, LV_OPA_TRANSP, LV_PART_KNOB);
-    R.print_pct = mk_label(R.print_arc, "0%", 24, true, theme::TEXT);
-    lv_obj_center(R.print_pct);
+    lv_obj_t* move = mk_obj(p);
+    lv_obj_set_width(move, LV_PCT(100));
+    lv_obj_set_height(move, 0);
+    lv_obj_set_flex_grow(move, 1);
+    lv_obj_set_flex_flow(move, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(move, 8, 0);
 
-    lv_obj_t* right = mk_obj(card);
-    lv_obj_set_height(right, LV_PCT(100));
-    lv_obj_set_flex_grow(right, 1);
-    lv_obj_set_flex_flow(right, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(right, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_row(right, 6, 0);
-    mk_label(right, "正在打印", 13, false, theme::MUTED);
-    R.print_file = mk_label(right, "—", 16, true, theme::TEXT);
-    lv_label_set_long_mode(R.print_file, LV_LABEL_LONG_MODE_DOTS);
-    lv_obj_set_width(R.print_file, LV_PCT(100));
-    R.print_meta = mk_label(right, "—", 13, false, theme::MUTED);
+    lv_obj_t* grid = mk_obj(move);
+    lv_obj_set_flex_grow(grid, 1);
+    lv_obj_set_height(grid, LV_PCT(100));
+    lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(grid, 6, 0);
 
-    lv_obj_t* tune1 = mk_obj(right);
-    lv_obj_set_size(tune1, LV_PCT(100), 36);
-    lv_obj_set_flex_flow(tune1, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(tune1, 6, 0);
-    lv_obj_set_flex_align(tune1, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    mk_mini_button(tune1, "-", speed_step_cb, (void*)(intptr_t)-1);
-    R.speed_label = mk_label(tune1, "100%", 14, true, theme::TEXT);
-    lv_obj_set_width(R.speed_label, 52);
-    lv_obj_set_style_text_align(R.speed_label, LV_TEXT_ALIGN_CENTER, 0);
-    mk_mini_button(tune1, "+", speed_step_cb, (void*)(intptr_t)1);
+    for (int r = 0; r < 3; r++) {
+        lv_obj_t* row = mk_obj(grid);
+        lv_obj_set_width(row, LV_PCT(100));
+        lv_obj_set_height(row, 0);
+        lv_obj_set_flex_grow(row, 1);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_style_pad_column(row, 6, 0);
+        for (int c = 0; c < 3; c++) {
+            int code = -1;
+            const char* txt = "";
+            if (r == 0 && c == 1) { code = 12; txt = "Y+"; }
+            if (r == 1 && c == 0) { code = 0; txt = "X-"; }
+            if (r == 1 && c == 1) { code = 99; txt = "回零"; }
+            if (r == 1 && c == 2) { code = 2; txt = "X+"; }
+            if (r == 2 && c == 1) { code = 10; txt = "Y-"; }
+            if (code < 0) {
+                lv_obj_t* blank = mk_obj(row);
+                lv_obj_set_flex_grow(blank, 1);
+                continue;
+            }
+            lv_obj_t* mb = mk_button(row, txt, code == 99, move_axis_cb,
+                                     (void*)(intptr_t)code, 54);
+            lv_obj_set_height(mb, LV_PCT(100));
+        }
+    }
 
-    lv_obj_t* tune2 = mk_obj(right);
-    lv_obj_set_size(tune2, LV_PCT(100), 36);
-    lv_obj_set_flex_flow(tune2, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(tune2, 6, 0);
-    lv_obj_set_flex_align(tune2, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    mk_mini_button(tune2, "Z-", z_step_cb, (void*)(intptr_t)-1);
-    R.zoff_label = mk_label(tune2, "0.00", 14, true, theme::TEXT);
-    lv_obj_set_width(R.zoff_label, 56);
-    lv_obj_set_style_text_align(R.zoff_label, LV_TEXT_ALIGN_CENTER, 0);
-    mk_mini_button(tune2, "Z+", z_step_cb, (void*)(intptr_t)1);
+    lv_obj_t* zc = mk_obj(move);
+    lv_obj_set_size(zc, 120, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(zc, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(zc, 6, 0);
+    lv_obj_t* zp = mk_button(zc, "Z+", false, move_axis_cb, (void*)(intptr_t)22, 0);
+    lv_obj_t* zm = mk_button(zc, "Z-", false, move_axis_cb, (void*)(intptr_t)20, 0);
+    lv_obj_set_flex_grow(zp, 0);
+    lv_obj_set_flex_grow(zm, 0);
+    lv_obj_set_height(zp, 80);
+    lv_obj_set_height(zm, 80);
 
-    R.print_temps = mk_label(right, "—", 12, false, theme::MUTED);
+    lv_obj_t* br = mk_obj(p);
+    lv_obj_set_size(br, LV_PCT(100), 40);
+    lv_obj_set_flex_flow(br, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(br, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    mk_label(br, "移动前请先回零", 11, false, theme::MUTED);
+    lv_obj_t* m84 = mk_button(br, "关闭电机", false, action_cb, (void*)"M84", 40);
+    lv_obj_set_flex_grow(m84, 0);
+    lv_obj_set_width(m84, 120);
+}
 
-    lv_obj_t* btns = mk_obj(right);
-    lv_obj_set_size(btns, LV_PCT(100), 36);
-    lv_obj_set_flex_flow(btns, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(btns, 8, 0);
-    mk_button(btns, "暂停", false, action_cb, (void*)"PAUSE", 44);
-    mk_button(btns, "继续", false, action_cb, (void*)"RESUME", 44);
-    mk_button(btns, "取消", true, action_cb, (void*)"CANCEL_PRINT", 44);
+void build_control(lv_obj_t* p) {
+    lv_obj_set_flex_flow(p, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(p, 6, 0);
+
+    lv_obj_t* tabs = mk_obj(p);
+    lv_obj_set_size(tabs, LV_PCT(100), 34);
+    lv_obj_set_flex_flow(tabs, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(tabs, 6, 0);
+    const char* names[2] = {"喷嘴", "移动"};
+    for (int i = 0; i < 2; i++) {
+        R.ctrl_chip[i] = mk_chip(tabs, names[i], ctrl_tab_cb, (void*)(intptr_t)i, 0, 34);
+        style_chip(R.ctrl_chip[i], i == 0);
+    }
+
+    lv_obj_t* lb = lv_button_create(tabs);
+    lv_obj_set_size(lb, 76, 34);
+    lv_obj_set_style_radius(lb, 999, 0);
+    lv_obj_set_style_bg_color(lb, theme::c(theme::SURFACE_HI), 0);
+    lv_obj_set_style_bg_opa(lb, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(lb, 0, 0);
+    lv_obj_set_style_shadow_width(lb, 0, 0);
+    lv_obj_set_style_pad_all(lb, 0, 0);
+    lv_obj_set_flex_flow(lb, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(lb, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(lb, 4, 0);
+    R.ctrl_light_icon = mk_icon(lb, IC_LIGHT, 16, theme::MUTED);
+    R.ctrl_light_text = mk_label(lb, "灯光", 11, false, theme::MUTED);
+    lv_obj_add_event_cb(lb, ctrl_light_cb, LV_EVENT_CLICKED, nullptr);
+    R.ctrl_light_btn = lb;
+
+    R.ctrl_body = mk_obj(p);
+    lv_obj_set_width(R.ctrl_body, LV_PCT(100));
+    lv_obj_set_flex_grow(R.ctrl_body, 1);
+
+    for (int i = 0; i < 2; i++) {
+        R.ctrl_tab[i] = mk_obj(R.ctrl_body);
+        lv_obj_set_size(R.ctrl_tab[i], LV_PCT(100), LV_PCT(100));
+        if (i != 0) lv_obj_add_flag(R.ctrl_tab[i], LV_OBJ_FLAG_HIDDEN);
+    }
+    build_control_nozzles(R.ctrl_tab[0]);
+    build_control_move(R.ctrl_tab[1]);
 }
 
 void build_maintenance(lv_obj_t* p) {
@@ -2591,7 +2801,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.5.3 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.0 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）
@@ -2689,6 +2899,7 @@ const char* wifi_signal_icon(int rssi) {
 
 void net_close_cb(lv_event_t*) {
     if (R.net_page) lv_obj_add_flag(R.net_page, LV_OBJ_FLAG_HIDDEN);
+    if (R.print_sheet) lv_obj_add_flag(R.print_sheet, LV_OBJ_FLAG_HIDDEN);
     g_net_open = false;
 }
 
@@ -2864,6 +3075,7 @@ void net_reconnect_cb(lv_event_t*) {
     }
     if (!s.available) {
         WIFI->request_service_restart();
+        g_feed_dismissed = false;
         g_wifi_restart_seen = true;
         notice_show(false, false, IC_WIFI, "正在重启 Wi-Fi 服务…", "正在重新拉起 wpa_supplicant", 0);
         return;
@@ -3084,6 +3296,15 @@ void feed_banner_hide() {
     g_notice_until = 0;
 }
 
+void feed_banner_gesture_cb(lv_event_t*) {
+    lv_indev_t* indev = lv_indev_active();
+    if (!indev) return;
+    if (lv_indev_get_gesture_dir(indev) == LV_DIR_TOP) {
+        feed_banner_hide();
+        g_feed_dismissed = true;
+    }
+}
+
 // 顶部通知是全局标准提示：进料状态、操作失败都走这里
 void notice_show(bool error, bool success, const char* icon, const std::string& title,
                  const std::string& sub, uint32_t duration_ms) {
@@ -3092,6 +3313,7 @@ void notice_show(bool error, bool success, const char* icon, const std::string& 
 }
 
 void notice_error(const std::string& title, const std::string& sub) {
+    g_feed_dismissed = false;
     notice_show(true, false, IC_CLOSE, title, sub, 5000);
 }
 
@@ -3123,6 +3345,19 @@ void feed_tick(const PrinterState& s) {
     pick_active(g_feed_pref_tool);
     pick_active(g_sheet_tool);
     for (int i = 0; i < 4; i++) pick_active(i);
+
+    if (err >= 0) {
+        std::string key = std::to_string(err) + ":" + estate;
+        if (key != g_feed_err_seen) g_feed_dismissed = false;
+    }
+    if (g_feed_dismissed) {
+        if (active < 0) {
+            g_feed_was_active = false;
+            g_feed_local = false;
+        }
+        if (active < 0 && err < 0) g_feed_dismissed = false;
+        if (g_feed_dismissed) return;
+    }
 
     if (err >= 0) {
         std::string key = std::to_string(err) + ":" + estate;
@@ -3209,6 +3444,26 @@ void feed_icons_tick(lv_timer_t*) {
     }
 }
 
+bool any_overlay_visible() {
+    auto vis = [](lv_obj_t* o) { return o && !lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN); };
+    return vis(R.sheet) || vis(R.picker) || vis(R.temp_page) || vis(R.scrim) ||
+           vis(R.keypad) || vis(R.nz_page) || vis(R.color_page) || vis(R.net_page) ||
+           vis(R.net_pw_page) || vis(R.print_sheet);
+}
+
+void update_feed_banner_pos() {
+    if (!R.feed_banner) return;
+    const char* rail_env = getenv("SKREEU1_RAIL");
+    const bool rail_right = rail_env && std::string(rail_env) == "right";
+    (void)any_overlay_visible;
+    int y = 6;
+    if (!any_overlay_visible()) {
+        if (active_page == 0) y = 42;       // 首页：别挡标题
+        else if (active_page == 1) y = 48;  // 控制页：别挡子标签
+    }
+    lv_obj_align(R.feed_banner, LV_ALIGN_TOP_MID, rail_right ? -36 : 36, y);
+}
+
 void build_feed_banner(lv_obj_t* screen) {
     const char* rail_env = getenv("SKREEU1_RAIL");
     const bool rail_right = rail_env && std::string(rail_env) == "right";
@@ -3229,7 +3484,8 @@ void build_feed_banner(lv_obj_t* screen) {
     lv_obj_set_flex_align(b, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(b, 8, 0);
-    lv_obj_remove_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(b, feed_banner_gesture_cb, LV_EVENT_GESTURE, nullptr);
     lv_obj_add_flag(b, LV_OBJ_FLAG_HIDDEN);
     R.feed_banner = b;
 
@@ -3289,7 +3545,7 @@ void ui_init(Moonraker* mr, lv_obj_t* screen, Wifi* wifi) {
     }
 
     build_home(pages[0]);
-    build_print(pages[1]);
+    build_control(pages[1]);
     build_maintenance(pages[2]);
     build_settings(pages[3]);
     // navigation rail (left, floating pill)
@@ -3304,8 +3560,8 @@ void ui_init(Moonraker* mr, lv_obj_t* screen, Wifi* wifi) {
     lv_obj_set_flex_flow(nav, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(nav, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    const char* icons[4] = {IC_HOME, IC_PRINT, IC_WRENCH, IC_COG};
-    const char* names[4] = {"首页", "打印", "维护", "设置"};
+    const char* icons[4] = {IC_HOME, IC_CONTROL, IC_WRENCH, IC_COG};
+    const char* names[4] = {"首页", "控制", "维护", "设置"};
     for (int i = 0; i < 4; i++) {
         lv_obj_t* b = lv_button_create(nav);
         lv_obj_set_size(b, 56, 56);
@@ -3333,6 +3589,7 @@ void ui_init(Moonraker* mr, lv_obj_t* screen, Wifi* wifi) {
     build_temp_page(screen);
     build_keypad(screen);
     build_nozzle_page(screen);
+    build_print_sheet(screen);
     build_net_page(screen);
     build_feed_banner(screen);
     lv_timer_create([](lv_timer_t* t) { feed_icons_tick(t); }, 60, nullptr);
@@ -3385,6 +3642,21 @@ void ui_open_net() {
     open_net_page();
 }
 
+void ui_open_print() {
+    open_print_sheet_cb(nullptr);
+}
+
+void ui_ctrl_tab(int i) {
+    if (i < 0 || i > 1) return;
+    g_ctrl_tab = i;
+    for (int j = 0; j < 2; j++) {
+        if (!R.ctrl_tab[j]) continue;
+        if (j == i) lv_obj_remove_flag(R.ctrl_tab[j], LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(R.ctrl_tab[j], LV_OBJ_FLAG_HIDDEN);
+        style_chip(R.ctrl_chip[j], j == i);
+    }
+}
+
 void ui_open_keypad(int slot) {
     const int* arr = (g_temp_kind == 1) ? g_bed_presets : g_presets;
     open_keypad(slot >= 0, slot,
@@ -3413,6 +3685,7 @@ void ui_show(int page) {
         else lv_obj_add_flag(pages[i], LV_OBJ_FLAG_HIDDEN);
     }
     style_nav(page);
+    update_feed_banner_pos();
 }
 
 void ui_tick() {
@@ -3473,6 +3746,9 @@ void ui_tick() {
     // status card
     bool printing = (s.print_state == "printing");
     bool paused = (s.print_state == "paused");
+    set_disabled(R.home_pause_btn, !printing);
+    set_disabled(R.home_resume_btn, !paused);
+    set_disabled(R.home_stop_btn, !(printing || paused));
     const char* state_txt = printing ? "打印中" : (paused ? "已暂停" : "待机");
 
     if (R.status_title) lv_label_set_text(R.status_title, state_txt);
@@ -3585,6 +3861,7 @@ void ui_tick() {
         }
     }
     apply_light_ui(light);
+    update_feed_banner_pos();
     if (g_temp_pending) {
         double actual = g_temp_pending_kind == 1
                             ? s.bed_target

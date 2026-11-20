@@ -143,7 +143,7 @@ void save_png(const char* path) {
 void parse_args(int argc, char** argv, Config& cfg, std::string& shot_path, int& page,
                 int& scroll, int& bench, int& sheet, bool& picker, bool& temp_page,
                 bool& bed_temp, bool& net, bool& keypad, bool& nozzle, bool& color,
-                bool& toast, int& slot) {
+                bool& toast, int& slot, bool& print_sheet, int& ctrl_tab) {
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--shot" && i + 1 < argc) {
@@ -170,6 +170,10 @@ void parse_args(int argc, char** argv, Config& cfg, std::string& shot_path, int&
             bed_temp = true;
         } else if (a == "--net") {
             net = true;
+        } else if (a == "--print") {
+            print_sheet = true;
+        } else if (a == "--ctrl" && i + 1 < argc) {
+            ctrl_tab = atoi(argv[++i]);
         } else if (a == "--keypad") {
             keypad = true;
         } else if (a == "--slot" && i + 1 < argc) {
@@ -208,9 +212,11 @@ int main(int argc, char** argv) {
     bool nozzle = false;
     bool color = false;
     bool toast = false;
+    bool print_sheet = false;
+    int ctrl_tab = -1;
     int slot = -1;
     parse_args(argc, argv, cfg, shot_path, page, scroll, bench, sheet, picker, temp_page,
-               bed_temp, net, keypad, nozzle, color, toast, slot);
+               bed_temp, net, keypad, nozzle, color, toast, slot, print_sheet, ctrl_tab);
 
     lv_init();
     lv_tick_set_cb(tick_ms);
@@ -320,6 +326,16 @@ int main(int argc, char** argv) {
         if (net) {
             ui_show(3);
             ui_open_net();
+            render_frames(8);
+        }
+        if (ctrl_tab >= 0) {
+            ui_show(1);
+            ui_ctrl_tab(ctrl_tab);
+            render_frames(8);
+        }
+        if (print_sheet) {
+            ui_show(0);
+            ui_open_print();
             render_frames(8);
         }
         if (temp_page) {
