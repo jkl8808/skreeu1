@@ -114,6 +114,8 @@ std::string g_feed_err_seen;
 int g_ctrl_tab = 0;
 bool g_feed_dismissed = false;
 int g_move_step = 10;
+bool g_home_pending = false;
+uint32_t g_home_at = 0;
 bool g_fan_pending[3] = {false, false, false};
 int g_fan_val[3] = {0, 0, 0};
 uint32_t g_fan_at[3] = {0, 0, 0};
@@ -2437,7 +2439,18 @@ void ctrl_step_cb(lv_event_t* e) {
 void move_axis_cb(lv_event_t* e) {
     int v = (int)(intptr_t)lv_event_get_user_data(e);
     if (v == 99) {
-        send_action("G28");
+        if (g_home_pending) return;
+        if (!MR || !MR->send_homing()) {
+            notice_error("回零未发送", "打印机未连接或只读模式");
+            return;
+        }
+        g_home_pending = true;
+        g_home_at = lv_tick_get();
+        notice_show(false, false, IC_HOME, "正在回零…", "等待打印机完成", 300000);
+        return;
+    }
+    if (g_home_pending) {
+        notice_error("正在回零", "请等回零完成后再移动");
         return;
     }
     if (MR) {
@@ -2976,7 +2989,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.2 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.3 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）
@@ -4074,20 +4087,43 @@ void ui_tick() {
             lv_slider_set_value(R.ctrl_fan_slider[fi], actual, LV_ANIM_OFF);
     }
 
+    std::string cmd_err = MR->take_command_error();
+    if (!cmd_err.empty()) {
+        if (g_home_pending) g_home_pending = false;
+        notice_error("命令失败", cmd_err);
+    }
     {
         const std::string& h = s.homed_axes;
         bool homed = h.find('x') != std::string::npos &&
                      h.find('y') != std::string::npos &&
                      h.find('z') != std::string::npos;
-        for (int i = 0; i < 6; i++) set_disabled(R.move_btn[i], !homed);
+        if (g_home_pending) {
+            bool hok = false;
+            std::string herr;
+            if (MR && MR->take_homing_result(hok, herr)) {
+                g_home_pending = false;
+                if (hok) {
+                    notice_show(false, true, IC_CHECK_CIRCLE, "回零完成", "", 2500);
+                } else {
+                    notice_error("回零失败", herr.empty() ? "请检查打印机" : herr);
+                }
+            } else if (lv_tick_get() - g_home_at > 300000) {
+                g_home_pending = false;
+                notice_error("回零超时", "请检查打印机");
+            }
+        }
+        for (int i = 0; i < 6; i++)
+            set_disabled(R.move_btn[i], !homed || g_home_pending);
         if (R.move_hint) {
-            lv_label_set_text(R.move_hint, homed ? "已回零" : "未回零：请先点回零");
+            const char* txt = g_home_pending ? "回零中…"
+                                            : (homed ? "已回零" : "未回零：请先点回零");
+            lv_label_set_text(R.move_hint, txt);
             lv_obj_set_style_text_color(
-                R.move_hint, theme::c(homed ? theme::SUCCESS : theme::MUTED), 0);
+                R.move_hint,
+                theme::c(g_home_pending ? theme::WARN : (homed ? theme::SUCCESS : theme::MUTED)),
+                0);
         }
     }
-    if (MR->take_command_error())
-        notice_error("命令发送失败", "检查打印机连接");
     for (int i = 0; i < 4; i++) {
         const FeedChannel& fc = s.feed[i];
         int fm = 0;

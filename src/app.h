@@ -154,7 +154,9 @@ public:
 
     PrinterState snapshot();
     bool send_gcode(const std::string& script);
-    bool take_command_error();
+    bool send_homing();
+    bool take_homing_result(bool& ok, std::string& error);
+    std::string take_command_error();
     const Config& config() const { return cfg_; }
 
 private:
@@ -170,9 +172,18 @@ private:
     std::thread cmd_thread_;
     std::mutex cmd_mu_;
     std::condition_variable cmd_cv_;
-    std::deque<std::string> cmd_queue_;
+    struct CmdItem {
+        std::string script;
+        bool homing = false;
+    };
+    std::deque<CmdItem> cmd_queue_;
     bool cmd_quit_ = false;
-    std::atomic<bool> cmd_error_{false};
+    std::mutex cmd_err_mu_;
+    std::string cmd_error_msg_;
+    std::mutex home_mu_;
+    bool home_done_ = false;
+    bool home_ok_ = false;
+    std::string home_error_;
     std::mutex mu_;
     PrinterState st_;
     bool running_ = false;

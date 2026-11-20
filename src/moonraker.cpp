@@ -33,7 +33,35 @@ bool http_get(const std::string& url, std::string& body, long timeout_s = 4) {
     return rc == CURLE_OK && status >= 200 && status < 300;
 }
 
-bool http_post(const std::string& url, std::string& body, long timeout_s = 5) {
+long command_timeout(const std::string& script) {
+    auto has = [&](const char* s) { return script.find(s) != std::string::npos; };
+    if (has("G28") || has("G29") || has("G34") || has("SCREWS_TILT") ||
+        has("BED_MESH_CALIBRATE") || has("PID_CALIBRATE") || has("SHAPER_CALIBRATE"))
+        return 300;   // 回零/校准可能几十秒到几分钟
+    if (has("AUTO_FEEDING") || has("FEED_AUTO") || has("MANUAL_FEEDING") || has("M600"))
+        return 600;   // 进料/退料可能几分钟
+    return 15;
+}
+
+std::string http_error_message(const std::string& body) {
+    try {
+        json j = json::parse(body);
+        if (j.contains("error")) {
+            const json& e = j["error"];
+            if (e.is_object() && e.contains("message") && e["message"].is_string())
+                return e["message"].get<std::string>();
+            if (e.is_string()) return e.get<std::string>();
+        }
+        if (j.contains("result") && j["result"].is_string() &&
+            j["result"].get<std::string>() != "ok")
+            return j["result"].get<std::string>();
+    } catch (...) {
+    }
+    return {};
+}
+
+bool http_post(const std::string& url, std::string& body, long timeout_s,
+               long* status_out = nullptr, int* curl_out = nullptr) {
     CURL* curl = curl_easy_init();
     if (!curl) return false;
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
@@ -46,6 +74,8 @@ bool http_post(const std::string& url, std::string& body, long timeout_s = 5) {
     long status = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
     curl_easy_cleanup(curl);
+    if (status_out) *status_out = status;
+    if (curl_out) *curl_out = (int)rc;
     return rc == CURLE_OK && status >= 200 && status < 300;
 }
 
@@ -164,8 +194,11 @@ void Moonraker::stop() {
     if (cmd_thread_.joinable()) cmd_thread_.join();
 }
 
-bool Moonraker::take_command_error() {
-    return cmd_error_.exchange(false);
+std::string Moonraker::take_command_error() {
+    std::lock_guard<std::mutex> lk(cmd_err_mu_);
+    std::string msg = std::move(cmd_error_msg_);
+    cmd_error_msg_.clear();
+    return msg;
 }
 
 PrinterState Moonraker::snapshot() {
@@ -173,12 +206,33 @@ PrinterState Moonraker::snapshot() {
     return st_;
 }
 
+bool Moonraker::send_homing() {
+    if (cfg_.read_only) return false;
+    {
+        std::lock_guard<std::mutex> lk(cmd_mu_);
+        if (cmd_quit_) return false;
+        cmd_queue_.push_back(CmdItem{"G28", true});
+    }
+    cmd_cv_.notify_one();
+    return true;
+}
+
+bool Moonraker::take_homing_result(bool& ok, std::string& error) {
+    std::lock_guard<std::mutex> lk(home_mu_);
+    if (!home_done_) return false;
+    ok = home_ok_;
+    error = home_error_;
+    home_done_ = false;
+    home_error_.clear();
+    return true;
+}
+
 bool Moonraker::send_gcode(const std::string& script) {
     if (cfg_.read_only) return false;
     {
         std::lock_guard<std::mutex> lk(cmd_mu_);
         if (cmd_quit_) return false;
-        cmd_queue_.push_back(script);
+        cmd_queue_.push_back(CmdItem{script, false});
     }
     cmd_cv_.notify_one();
     return true;   // 入队即返回，真正的 HTTP 请求在后台线程做
@@ -188,7 +242,7 @@ bool Moonraker::send_gcode(const std::string& script) {
 // 把 LVGL 主线程卡住（选耗材要等 1 秒才响应就是它导致的）。
 void Moonraker::send_loop() {
     for (;;) {
-        std::string script;
+        CmdItem item;
         {
             std::unique_lock<std::mutex> lk(cmd_mu_);
             cmd_cv_.wait(lk, [this] { return cmd_quit_ || !cmd_queue_.empty(); });
@@ -196,9 +250,10 @@ void Moonraker::send_loop() {
                 if (cmd_quit_) return;
                 continue;
             }
-            script = std::move(cmd_queue_.front());
+            item = std::move(cmd_queue_.front());
             cmd_queue_.pop_front();
         }
+        const std::string& script = item.script;
         CURL* curl = curl_easy_init();
         if (!curl) continue;
         char* esc = curl_easy_escape(curl, script.c_str(), (int)script.size());
@@ -206,7 +261,30 @@ void Moonraker::send_loop() {
                           "/printer/gcode/script?script=" + (esc ? esc : "");
         curl_free(esc);
         std::string body;
-        if (!http_post(url, body)) cmd_error_ = true;
+        long status = 0;
+        int ccode = 0;
+        bool ok = http_post(url, body, command_timeout(script), &status, &ccode);
+        std::string msg;
+        if (!ok) {
+            if (ccode == CURLE_OPERATION_TIMEDOUT) {
+                msg = "命令超时，打印机可能仍在执行";
+            } else if (status >= 400) {
+                msg = http_error_message(body);
+                if (msg.empty()) msg = "HTTP " + std::to_string(status);
+            } else {
+                msg = "无法连接打印机";
+            }
+            if (!item.homing) {
+                std::lock_guard<std::mutex> lk(cmd_err_mu_);
+                cmd_error_msg_ = msg;
+            }
+        }
+        if (item.homing) {
+            std::lock_guard<std::mutex> lk(home_mu_);
+            home_done_ = true;
+            home_ok_ = ok;
+            home_error_ = ok ? "" : msg;
+        }
         curl_easy_cleanup(curl);
     }
 }
