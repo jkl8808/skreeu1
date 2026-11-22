@@ -14,7 +14,9 @@ It talks to Moonraker directly and keeps the stock services (unisrv / MQTT) runn
 ## 特性
 
 - **4 页导航**：首页 / 控制 / 维护 / 设置，左侧悬浮胶囊导航（可用 `SKREEU1_RAIL=right` 换到右侧）
-- **首页**：左侧 3/4 大状态卡，右侧 1/4 快捷操作（灯光 / 暂停·继续 / 停止）；点状态卡看速度倍率 / Z-offset
+- **首页**：左侧 3/4 大状态卡，右侧 1/4 快捷操作（灯光 / 暂停·继续 / 停止）
+- **文件打印**：待机时点状态卡选机内文件，带缩略图和 G-code 元数据；开始前做耗材映射
+- **打印中**：点状态卡看速度倍率 / Z-offset / 进度
 - **喷嘴详情**：耗材卡、温度卡、自动预进料、喷嘴参数（0.2/0.4/0.6/0.8 + 标准/高流）、载入/退料
 - **调温浮层**：竖向滑块（松手才下发）、数字键盘、6 个可编辑快捷温度；喷嘴 `M104`、热床 `M140`
 - **更换耗材**：品牌列 + 28 色调色板 + 型号列表，支持自定义品牌和自定义类型
@@ -38,8 +40,10 @@ It talks to Moonraker directly and keeps the stock services (unisrv / MQTT) runn
 | ![风扇](docs/screenshots/control-fan.png) | ![循环风扇](docs/screenshots/control-fan-2.png) | ![打印控制](docs/screenshots/print-sheet.png) |
 | **更换耗材** | **维护** | **网络** |
 | ![更换耗材](docs/screenshots/materials.png) | ![维护](docs/screenshots/maintenance.png) | ![网络](docs/screenshots/network.png) |
-| **Wi-Fi 密码** | **进料通知** |  |
-| ![Wi-Fi 密码](docs/screenshots/network-pass.png) | ![进料通知](docs/screenshots/feed.png) |  |
+| **Wi-Fi 密码** | **进料通知** | **选择文件** |
+| ![Wi-Fi 密码](docs/screenshots/network-pass.png) | ![进料通知](docs/screenshots/feed.png) | ![选择文件](docs/screenshots/files.png) |
+| **准备打印 / 耗材映射** |  |  |
+| ![准备打印](docs/screenshots/prepare.png) |  |  |
 
 喷嘴详情 / 调温 / 设置页：
 [nozzle.png](docs/screenshots/nozzle.png) ·
@@ -193,6 +197,17 @@ DRM 显示控制器保持打开。
 - 右侧 1/4：灯光开关、暂停 / 继续（同一个按钮，按当前状态切换）、停止
 - 点状态卡：打开速度倍率 / Z-offset / 进度浮层
 - 顶部通知可以**上滑隐藏**，进料结束后自动恢复
+
+### 文件选择 / 准备打印
+
+- 待机时点首页状态卡，列出机内 G-code（按修改时间倒序，带缩略图）
+- 点文件进入准备页：预估时间、层数、层高、模型高度、喷嘴直径、耗材总重
+- **耗材映射**：G-code 里的 T1..T4 对应到打印机上的 E1..E4，点右侧按钮切换；
+  默认按耗材种类和颜色自动匹配最合适的槽位
+- 喷嘴直径或高流量类型不匹配、或映射到未识别耗材时，下方会直接提示；
+  喷嘴不匹配时「开始打印」置灰，避免 Klipper 拒绝
+- 开始打印使用与 Moonraker 相同的 `SDCARD_PRINT_FILE_WITH_PARAMETERS` 参数
+  （层高、喷嘴温度、耗材用量、映射表等），不会绕过原厂打印流程
 
 ### 控制页
 

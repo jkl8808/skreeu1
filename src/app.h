@@ -34,6 +34,45 @@ struct FilamentInfo {
     int weight = 0;          // g
 };
 
+// 打印机上的 G-code 文件（/server/files/list）
+struct GcodeFile {
+    std::string name;      // 相对 gcodes 的路径
+    double modified = 0;   // unix 时间
+    double size = 0;       // 字节
+};
+
+// G-code 元数据里的一个虚拟耗材位（T0..T3）
+struct GcodeFilament {
+    std::string type;          // PLA / PETG / NONE
+    std::string name;          // Snapmaker PLA SnapSpeed @U1
+    uint32_t argb = 0xFFFFFF;
+    double weight_g = 0;
+    double used_mm = 0;
+    double nozzle_diameter = 0.4;
+    int nozzle_temp = 0;
+    std::string volume_type = "standard";
+    bool used = false;
+};
+
+// /server/files/metadata 的常用字段，raw 保留完整 JSON 用于开始打印
+struct GcodeMeta {
+    bool ok = false;
+    std::string filename;
+    std::string slicer;
+    std::string slicer_version;
+    double estimated_time = 0;     // 秒
+    int layer_count = 0;
+    double layer_height = 0;
+    double object_height = 0;
+    double nozzle_diameter = 0;
+    double filament_total = 0;     // mm
+    double filament_weight_total = 0;  // g
+    int filament_count = 0;
+    GcodeFilament filaments[4];
+    std::string thumb_path;        // .thumbs/xxx-96x96.png
+    std::string raw;               // metadata result 原始 JSON
+};
+
 // 可选耗材，来自 printer_data/config/snapmaker/filament_parameters.json
 struct MaterialOption {
     std::string type;    // PLA
@@ -155,6 +194,13 @@ public:
     PrinterState snapshot();
     bool send_gcode(const std::string& script);
     bool send_homing();
+
+    // 打印文件：列表 / 元数据 / 带耗材映射开始打印
+    std::vector<GcodeFile> list_gcode_files();
+    bool gcode_metadata(const std::string& filename, GcodeMeta& out);
+    bool start_print(const GcodeMeta& meta, const int map[4]);
+    bool fetch_thumb(const std::string& rel_path, std::string& out,
+                     long* status_out = nullptr);
     bool take_homing_result(bool& ok, std::string& error);
     std::string take_command_error();
     const Config& config() const { return cfg_; }

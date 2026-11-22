@@ -144,7 +144,7 @@ void parse_args(int argc, char** argv, Config& cfg, std::string& shot_path, int&
                 int& scroll, int& bench, int& sheet, bool& picker, bool& temp_page,
                 bool& bed_temp, bool& net, bool& keypad, bool& nozzle, bool& color,
                 bool& toast, int& slot, bool& print_sheet, int& ctrl_tab,
-                int& fan_page) {
+                int& fan_page, bool& files_page, int& prepare, int& start_file) {
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--shot" && i + 1 < argc) {
@@ -173,6 +173,12 @@ void parse_args(int argc, char** argv, Config& cfg, std::string& shot_path, int&
             net = true;
         } else if (a == "--print") {
             print_sheet = true;
+        } else if (a == "--files") {
+            files_page = true;
+        } else if (a == "--prepare" && i + 1 < argc) {
+            prepare = atoi(argv[++i]);
+        } else if (a == "--start" && i + 1 < argc) {
+            start_file = atoi(argv[++i]);
         } else if (a == "--ctrl" && i + 1 < argc) {
             ctrl_tab = atoi(argv[++i]);
         } else if (a == "--fan-page" && i + 1 < argc) {
@@ -219,9 +225,12 @@ int main(int argc, char** argv) {
     int ctrl_tab = -1;
     int fan_page = -1;
     int slot = -1;
+    bool files_page = false;
+    int prepare = -1;
+    int start_file = -1;
     parse_args(argc, argv, cfg, shot_path, page, scroll, bench, sheet, picker, temp_page,
                bed_temp, net, keypad, nozzle, color, toast, slot, print_sheet, ctrl_tab,
-               fan_page);
+               fan_page, files_page, prepare, start_file);
 
     lv_init();
     lv_tick_set_cb(tick_ms);
@@ -342,6 +351,24 @@ int main(int argc, char** argv) {
         if (print_sheet) {
             ui_show(0);
             ui_open_print();
+            render_frames(8);
+        }
+        if (files_page) {
+            ui_show(0);
+            ui_open_files();
+            render_frames(60);
+        }
+        if (prepare >= 0) {
+            ui_show(0);
+            if (!files_page) ui_open_files();
+            ui_prepare_file(prepare);
+            render_frames(8);
+        }
+        if (start_file >= 0) {
+            ui_show(0);
+            ui_open_files();
+            ui_start_prepared(start_file);
+            std::this_thread::sleep_for(std::chrono::milliseconds(600));
             render_frames(8);
         }
         if (temp_page) {

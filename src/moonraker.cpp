@@ -3,6 +3,8 @@
 #include "hv/json.hpp"
 
 #include <curl/curl.h>
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -18,7 +20,8 @@ size_t write_cb(void* data, size_t size, size_t nmemb, void* userp) {
     return size * nmemb;
 }
 
-bool http_get(const std::string& url, std::string& body, long timeout_s = 4) {
+bool http_get(const std::string& url, std::string& body, long timeout_s = 4,
+              long* status_out = nullptr) {
     CURL* curl = curl_easy_init();
     if (!curl) return false;
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
@@ -30,6 +33,7 @@ bool http_get(const std::string& url, std::string& body, long timeout_s = 4) {
     long status = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
     curl_easy_cleanup(curl);
+    if (status_out) *status_out = (rc == CURLE_OK) ? status : 0;
     return rc == CURLE_OK && status >= 200 && status < 300;
 }
 
@@ -40,6 +44,7 @@ long command_timeout(const std::string& script) {
         return 300;   // 回零/校准可能几十秒到几分钟
     if (has("AUTO_FEEDING") || has("FEED_AUTO") || has("MANUAL_FEEDING") || has("M600"))
         return 600;   // 进料/退料可能几分钟
+    if (has("SDCARD_PRINT_FILE")) return 60;  // 载入文件 + 预检查
     return 15;
 }
 
@@ -89,6 +94,105 @@ bool bget(const json& j, const char* k, bool def = false) {
     auto it = j.find(k);
     if (it == j.end() || !it->is_boolean()) return def;
     return it->get<bool>();
+}
+
+std::string url_encode(const std::string& s) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(s.size());
+    for (unsigned char c : s) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+            out += (char)c;
+        } else {
+            out += '%';
+            out += hex[c >> 4];
+            out += hex[c & 0x0F];
+        }
+    }
+    return out;
+}
+
+std::string encode_path(const std::string& p) {
+    std::string out;
+    size_t start = 0;
+    while (start <= p.size()) {
+        size_t slash = p.find('/', start);
+        std::string seg = p.substr(start, slash == std::string::npos ? std::string::npos
+                                                                     : slash - start);
+        if (!out.empty()) out += '/';
+        out += url_encode(seg);
+        if (slash == std::string::npos) break;
+        start = slash + 1;
+    }
+    return out;
+}
+
+std::string trim_ws(const std::string& s) {
+    size_t a = s.find_first_not_of(" \t\r\n");
+    if (a == std::string::npos) return "";
+    size_t b = s.find_last_not_of(" \t\r\n");
+    return s.substr(a, b - a + 1);
+}
+
+std::vector<std::string> split_semicolon(const std::string& s) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (char c : s) {
+        if (c == ';') {
+            out.push_back(trim_ws(cur));
+            cur.clear();
+        } else {
+            cur += c;
+        }
+    }
+    out.push_back(trim_ws(cur));
+    return out;
+}
+
+std::vector<std::string> str_list(const json& j, const char* key) {
+    std::vector<std::string> out;
+    auto it = j.find(key);
+    if (it == j.end()) return out;
+    if (it->is_array()) {
+        for (const auto& v : *it) {
+            if (v.is_string()) out.push_back(trim_ws(v.get<std::string>()));
+            else if (v.is_number()) out.push_back(v.dump());
+        }
+    } else if (it->is_string()) {
+        out = split_semicolon(it->get<std::string>());
+    }
+    return out;
+}
+
+std::vector<double> num_list(const json& j, const char* key) {
+    std::vector<double> out;
+    auto it = j.find(key);
+    if (it == j.end()) return out;
+    auto add = [&](const json& v) {
+        if (v.is_number()) out.push_back(v.get<double>());
+        else if (v.is_string()) {
+            try { out.push_back(std::stod(trim_ws(v.get<std::string>()))); } catch (...) {}
+        }
+    };
+    if (it->is_array()) {
+        for (const auto& v : *it) add(v);
+    } else if (it->is_string()) {
+        for (const auto& part : split_semicolon(it->get<std::string>())) {
+            try { out.push_back(std::stod(part)); } catch (...) {}
+        }
+    } else {
+        add(*it);
+    }
+    return out;
+}
+
+uint32_t color_value(const std::string& s) {
+    std::string v = trim_ws(s);
+    if (!v.empty() && v[0] == '#') v = v.substr(1);
+    if (v.size() == 8) v = v.substr(2);  // AARRGGBB
+    if (v.size() < 6) return 0xFFFFFF;
+    return (uint32_t)strtoul(v.substr(0, 6).c_str(), nullptr, 16);
 }
 
 } // namespace
@@ -287,6 +391,243 @@ void Moonraker::send_loop() {
         }
         curl_easy_cleanup(curl);
     }
+}
+
+std::vector<GcodeFile> Moonraker::list_gcode_files() {
+    std::vector<GcodeFile> files;
+    std::string body;
+    std::string url = "http://" + cfg_.host + ":" + std::to_string(cfg_.port) +
+                      "/server/files/list?root=gcodes";
+    if (!http_get(url, body, 8)) return files;
+    try {
+        json j = json::parse(body);
+        const json& arr = j.at("result");
+        for (const auto& it : arr) {
+            if (!it.is_object()) continue;
+            std::string path = it.value("path", "");
+            if (path.empty()) continue;
+            std::string lower = path;
+            for (char& c : lower) c = (char)tolower((unsigned char)c);
+            if (lower.size() < 6 || lower.substr(lower.size() - 6) != ".gcode") continue;
+            GcodeFile f;
+            f.name = path;
+            f.modified = dget(it, "modified");
+            f.size = dget(it, "size");
+            files.push_back(std::move(f));
+        }
+    } catch (...) {
+        return {};
+    }
+    std::sort(files.begin(), files.end(), [](const GcodeFile& a, const GcodeFile& b) {
+        if (a.modified != b.modified) return a.modified > b.modified;
+        return a.name < b.name;
+    });
+    return files;
+}
+
+bool Moonraker::gcode_metadata(const std::string& filename, GcodeMeta& out) {
+    out = GcodeMeta();
+    std::string body;
+    std::string url = "http://" + cfg_.host + ":" + std::to_string(cfg_.port) +
+                      "/server/files/metadata?filename=" + url_encode(filename);
+    if (!http_get(url, body, 8)) return false;
+    try {
+        json j = json::parse(body).at("result");
+        if (!j.is_object()) return false;
+
+        out.ok = true;
+        out.filename = j.value("filename", filename);
+        if (out.filename.empty()) out.filename = filename;
+        out.slicer = j.value("slicer", "");
+        out.slicer_version = j.value("slicer_version", "");
+        out.estimated_time = dget(j, "estimated_time");
+        out.layer_count = (int)dget(j, "layer_count");
+        out.layer_height = dget(j, "layer_height");
+        out.object_height = dget(j, "object_height");
+        out.nozzle_diameter = dget(j, "nozzle_diameter");
+        out.filament_total = dget(j, "filament_total");
+        out.filament_weight_total = dget(j, "filament_weight_total");
+
+        auto th = j.find("thumbnails");
+        if (th != j.end() && th->is_array()) {
+            int best_d = 9999;
+            for (const auto& t : *th) {
+                if (!t.is_object()) continue;
+                std::string rp = t.value("relative_path", "");
+                if (rp.empty()) continue;
+                int w = (int)dget(t, "width");
+                int d = std::abs(w - 96);
+                if (out.thumb_path.empty() || d < best_d) {
+                    out.thumb_path = rp;
+                    best_d = d;
+                }
+            }
+        }
+        out.raw = j.dump();
+
+        auto types = str_list(j, "filament_type");
+        auto colors = str_list(j, "filament_colors");
+        if (colors.empty()) colors = str_list(j, "filament_colour");
+        auto weights = num_list(j, "filament_weight");
+        if (weights.empty()) weights = num_list(j, "filament_weights");
+        auto used_mm = num_list(j, "filament_used_mm");
+        auto dia = num_list(j, "nozzle_diameter_list");
+        auto temp = num_list(j, "nozzle_temp");
+        auto vol = str_list(j, "filament_volume_type");
+
+        int n = (int)types.size();
+        auto grow = [&](size_t sz) { if ((int)sz > n) n = (int)sz; };
+        grow(colors.size()); grow(weights.size()); grow(used_mm.size());
+        grow(dia.size()); grow(temp.size()); grow(vol.size());
+        if (n > 4) n = 4;
+        out.filament_count = n;
+        for (int i = 0; i < n; i++) {
+            GcodeFilament& f = out.filaments[i];
+            if (i < (int)types.size()) f.type = types[i];
+            if (f.type.empty() || f.type == "NONE") f.type = "—";
+            if (i < (int)colors.size()) f.argb = color_value(colors[i]);
+            if (i < (int)weights.size()) f.weight_g = weights[i];
+            if (i < (int)used_mm.size()) f.used_mm = used_mm[i];
+            if (i < (int)dia.size()) f.nozzle_diameter = dia[i];
+            else f.nozzle_diameter = out.nozzle_diameter;
+            if (i < (int)temp.size()) f.nozzle_temp = (int)temp[i];
+            if (i < (int)vol.size() && !vol[i].empty()) f.volume_type = vol[i];
+            f.used = f.weight_g > 0.0001 || f.used_mm > 0.0001;
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool Moonraker::start_print(const GcodeMeta& meta, const int map[4]) {
+    if (cfg_.read_only || meta.raw.empty()) return false;
+    json m;
+    try {
+        m = json::parse(meta.raw);
+    } catch (...) {
+        return false;
+    }
+
+    auto esc = [](std::string v) {
+        std::string out;
+        for (char c : v) {
+            if (c == '"') out += '\\';
+            out += c;
+        }
+        return out;
+    };
+    // Klipper 的参数用双引号包起来，数组里的字符串必须用单引号，
+    // 否则 FILAMENT_TYPE="["PLA"]" 会把 G-code 参数提前截断。
+    auto py_repr = [](const json& v) -> std::string {
+        if (!v.is_string()) return v.dump();
+        std::string out;
+        for (char c : v.get<std::string>()) {
+            if (c == '\\' || c == '\'') out += '\\';
+            out += c;
+        }
+        return "'" + out + "'";
+    };
+    auto py_list = [&](const json& v) -> std::string {
+        std::string out = "[";
+        if (v.is_array()) {
+            bool first = true;
+            for (const auto& item : v) {
+                if (!first) out += ",";
+                first = false;
+                out += py_repr(item);
+            }
+        }
+        out += "]";
+        return out;
+    };
+    auto list_str = [&](const json& v) -> std::string {
+        if (v.is_array()) {
+            for (const auto& item : v)
+                if (item.is_string()) return py_list(v);
+        }
+        return v.dump();
+    };
+    auto add_param = [](std::string& script, const char* key, const std::string& val) {
+        script += " ";
+        script += key;
+        script += "=\"";
+        script += val;
+        script += "\"";
+    };
+
+    std::string script = "SDCARD_PRINT_FILE_WITH_PARAMETERS FILENAME=\"" + esc(meta.filename) + "\"";
+
+    char mt[64];
+    snprintf(mt, sizeof(mt), "[[0,%d],[1,%d],[2,%d],[3,%d]]",
+             map[0], map[1], map[2], map[3]);
+    add_param(script, "MAP_TABLE", mt);
+
+    auto opt_num = [&](const char* key, const char* meta_key) {
+        auto it = m.find(meta_key);
+        if (it != m.end() && it->is_number()) add_param(script, key, it->dump());
+    };
+    auto opt_list = [&](const char* key, const char* meta_key) {
+        auto it = m.find(meta_key);
+        if (it == m.end()) return;
+        if (it->is_array()) add_param(script, key, list_str(*it));
+        else if (it->is_string()) {
+            auto parts = split_semicolon(it->get<std::string>());
+            if (parts.size() > 1) {
+                json arr = json::array();
+                for (const auto& p : parts) arr.push_back(p);
+                add_param(script, key, list_str(arr));
+            }
+        }
+    };
+
+    opt_num("LINE_WIDTH", "line_width");
+    opt_num("LAYER_HEIGHT", "layer_height");
+    opt_list("OUTER_WALL_SPEED_LIST", "outer_wall_speed_list");
+    opt_list("OUTER_WALL_ACCELERATION_LIST", "outer_wall_acceleration_list");
+    opt_list("NOZZLE_DIAMETER_LIST", "nozzle_diameter_list");
+    opt_list("NOZZLE_TEMP", "nozzle_temp");
+    opt_list("FILAMENT_FLOW_RATIO", "filament_flow_ratio");
+    opt_list("FILAMENT_DIAMETER", "filament_diameter");
+    opt_list("FILAMENT_MAX_VOLUMETRIC_SPEED", "filament_max_volumetric_speed");
+    opt_list("FILAMENT_VOLUME_TYPE", "filament_volume_type");
+    opt_list("PROCESS_FLOW_SUPPORT", "process_flow_support");
+
+    // filament_type 在 Moonraker 里是分号分隔字符串
+    auto types = m.find("filament_type");
+    if (types != m.end()) {
+        json arr = json::array();
+        if (types->is_array()) {
+            for (const auto& v : *types)
+                arr.push_back(v.is_string() ? v.get<std::string>() : "NONE");
+        } else if (types->is_string()) {
+            for (const auto& p : split_semicolon(types->get<std::string>()))
+                arr.push_back(p.empty() ? "NONE" : p);
+        }
+        add_param(script, "FILAMENT_TYPE", py_list(arr));
+    }
+
+    // filament_used_g 对应 Moonraker 的 filament_weight
+    auto w = m.find("filament_weight");
+    if (w == m.end()) w = m.find("filament_weights");
+    if (w != m.end() && w->is_array()) add_param(script, "FILAMENT_USED_G", list_str(*w));
+    auto um = m.find("filament_used_mm");
+    if (um != m.end() && um->is_array()) add_param(script, "FILAMENT_USED_MM", list_str(*um));
+
+    if (m.contains("slicer") && m["slicer"].is_string())
+        add_param(script, "SLICER", m["slicer"].get<std::string>());
+    if (m.contains("slicer_version") && m["slicer_version"].is_string())
+        add_param(script, "SLICER_VERSION", m["slicer_version"].get<std::string>());
+
+    return send_gcode(script);
+}
+
+bool Moonraker::fetch_thumb(const std::string& rel_path, std::string& out,
+                            long* status_out) {
+    if (rel_path.empty()) return false;
+    std::string url = "http://" + cfg_.host + ":" + std::to_string(cfg_.port) +
+                      "/server/files/gcodes/" + encode_path(rel_path);
+    return http_get(url, out, 6, status_out);
 }
 
 void Moonraker::poll_history() {

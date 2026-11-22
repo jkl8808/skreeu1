@@ -4,8 +4,11 @@
 #include "app.h"
 #include "theme.h"
 
+#include "../lvgl/src/misc/cache/instance/lv_image_cache.h"
+
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -84,6 +87,7 @@ void update_sheet();
 void update_nozzle_page();
 void show_toast(const char* msg);
 void open_print_sheet_cb(lv_event_t* e);
+void home_status_cb(lv_event_t* e);
 void ctrl_tab_cb(lv_event_t* e);
 void ctrl_light_cb(lv_event_t* e);
 std::string feed_title(const std::string& act, bool finished, bool failed, int tool);
@@ -287,6 +291,32 @@ struct Refs {
     lv_obj_t* home_light_btn = nullptr;
     lv_obj_t* home_light_icon = nullptr;
     lv_obj_t* home_light_text = nullptr;
+    lv_obj_t* status_hint = nullptr;
+
+    // 文件选择 / 准备打印
+    lv_obj_t* file_sheet = nullptr;
+    lv_obj_t* file_list_view = nullptr;
+    lv_obj_t* file_list = nullptr;
+    lv_obj_t* file_count = nullptr;
+    lv_obj_t* file_more_btn = nullptr;
+    lv_obj_t* prep_view = nullptr;
+    lv_obj_t* prep_name = nullptr;
+    lv_obj_t* prep_thumb = nullptr;
+    lv_obj_t* prep_thumb_ph = nullptr;
+    lv_obj_t* prep_time = nullptr;
+    lv_obj_t* prep_lines = nullptr;
+    lv_obj_t* prep_height = nullptr;
+    lv_obj_t* prep_nozzle = nullptr;
+    lv_obj_t* prep_filament = nullptr;
+    lv_obj_t* prep_slicer = nullptr;
+    lv_obj_t* prep_maps = nullptr;
+    lv_obj_t* prep_map_dot[4] = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* prep_map_btn[4] = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* prep_map_dot2[4] = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* prep_map_txt[4] = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* prep_hint = nullptr;
+    lv_obj_t* prep_start_btn = nullptr;
+    lv_obj_t* prep_start_txt = nullptr;
 
     // 打印控制浮层
     lv_obj_t* print_sheet = nullptr;
@@ -777,6 +807,28 @@ bool g_slider_dragging = false;
 uint32_t g_slider_apply_at = 0;
 int g_keypad_val = 0;
 bool g_keypad_fresh = true;
+
+// 文件选择
+std::vector<GcodeFile> g_files;
+size_t g_files_shown = 0;
+GcodeMeta g_prep_meta;
+int g_prep_map[4] = {0, 1, 2, 3};
+int g_prep_used[4] = {0, 0, 0, 0};
+int g_prep_used_n = 0;
+uint32_t g_start_pending_until = 0;
+std::string g_start_file;
+
+struct ListThumb {
+    lv_obj_t* img = nullptr;
+    lv_obj_t* ph = nullptr;
+    std::string path;
+    std::string png;
+    lv_image_dsc_t dsc{};
+};
+std::vector<ListThumb*> g_list_thumbs;
+std::deque<int> g_thumb_queue;
+std::string g_prep_thumb_png;
+lv_image_dsc_t g_prep_thumb_dsc{};
 
 const char* preset_path() {
     const char* p = getenv("SKREEU1_TEMPS");
@@ -2342,7 +2394,7 @@ void build_home(lv_obj_t* p) {
     lv_obj_set_flex_align(R.status_card, LV_FLEX_ALIGN_SPACE_BETWEEN,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_add_flag(R.status_card, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(R.status_card, open_print_sheet_cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(R.status_card, home_status_cb, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* sl = mk_obj(R.status_card);
     lv_obj_remove_flag(sl, LV_OBJ_FLAG_CLICKABLE);
@@ -2360,7 +2412,7 @@ void build_home(lv_obj_t* p) {
     lv_obj_set_width(R.status_sub2, LV_PCT(100));
     lv_obj_set_height(R.status_sub2, lv_font_get_line_height(theme::font(13, false)) + 2);
     lv_label_set_long_mode(R.status_sub2, LV_LABEL_LONG_MODE_DOTS);
-    mk_label(sl, "打印控制里可调速度 / Z-offset", 10, false, theme::MUTED);
+    R.status_hint = mk_label(sl, "点此选择文件开始打印", 10, false, theme::MUTED);
 
     R.status_arc = lv_arc_create(R.status_card);
     lv_obj_set_size(R.status_arc, 104, 104);
@@ -2403,6 +2455,14 @@ void open_print_sheet_cb(lv_event_t*) {
     if (!R.print_sheet) return;
     lv_obj_remove_flag(R.print_sheet, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_to_index(R.print_sheet, -1);
+}
+
+void home_status_cb(lv_event_t*) {
+    PrinterState s = MR ? MR->snapshot() : PrinterState();
+    if (s.print_state == "printing" || s.print_state == "paused")
+        open_print_sheet_cb(nullptr);
+    else
+        ui_open_files();
 }
 
 void build_print_sheet(lv_obj_t* screen) {
@@ -2488,6 +2548,702 @@ void build_print_sheet(lv_obj_t* screen) {
     mk_button(btns, "暂停", false, action_cb, (void*)"PAUSE", 40);
     mk_button(btns, "继续", false, action_cb, (void*)"RESUME", 40);
     mk_button(btns, "取消", true, action_cb, (void*)"CANCEL_PRINT", 40);
+}
+
+// ---------------------------------------------------------------- 文件选择 / 准备打印
+
+int png_scale_for(const std::string& png, int target) {
+    if (png.size() < 24) return 256;
+    const uint8_t* p = (const uint8_t*)png.data();
+    int w = (p[16] << 24) | (p[17] << 16) | (p[18] << 8) | p[19];
+    if (w <= 0) return 256;
+    int sc = target * 256 / w;
+    return sc > 0 ? sc : 256;
+}
+
+std::string thumb_guess(const std::string& name, int size) {
+    std::string stem = name;
+    std::string low = stem;
+    for (char& c : low) c = (char)tolower((unsigned char)c);
+    if (low.size() > 6 && low.substr(low.size() - 6) == ".gcode")
+        stem = stem.substr(0, stem.size() - 6);
+    size_t slash = stem.find_last_of('/');
+    std::string dir = slash == std::string::npos ? "" : stem.substr(0, slash + 1);
+    std::string base = slash == std::string::npos ? stem : stem.substr(slash + 1);
+    char buf[24];
+    snprintf(buf, sizeof(buf), "-%dx%d.png", size, size);
+    return dir + ".thumbs/" + base + buf;
+}
+
+std::string file_basename(const std::string& p) {
+    size_t n = p.find_last_of('/');
+    return n == std::string::npos ? p : p.substr(n + 1);
+}
+
+std::string fmt_eta(double s) {
+    char buf[32];
+    int total = (int)s;
+    if (total >= 3600)
+        snprintf(buf, sizeof(buf), "%dh%02dm", total / 3600, (total % 3600) / 60);
+    else
+        snprintf(buf, sizeof(buf), "%dm", (total + 59) / 60);
+    return buf;
+}
+
+std::string fmt_size(double b) {
+    char buf[32];
+    if (b >= 1048576.0)
+        snprintf(buf, sizeof(buf), "%.1f MB", b / 1048576.0);
+    else if (b >= 1024.0)
+        snprintf(buf, sizeof(buf), "%.0f KB", b / 1024.0);
+    else
+        snprintf(buf, sizeof(buf), "%.0f B", b);
+    return buf;
+}
+
+std::string fmt_date(double ts) {
+    time_t t = (time_t)ts;
+    struct tm tmv{};
+    localtime_r(&t, &tmv);
+    char buf[32];
+    strftime(buf, sizeof(buf), "%m-%d %H:%M", &tmv);
+    return buf;
+}
+
+bool same_ci(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); i++)
+        if (tolower((unsigned char)a[i]) != tolower((unsigned char)b[i])) return false;
+    return true;
+}
+
+void load_prep_thumb() {
+    lv_image_cache_drop(&g_prep_thumb_dsc);
+    g_prep_thumb_png.clear();
+    if (R.prep_thumb) lv_obj_add_flag(R.prep_thumb, LV_OBJ_FLAG_HIDDEN);
+    if (R.prep_thumb_ph) lv_obj_remove_flag(R.prep_thumb_ph, LV_OBJ_FLAG_HIDDEN);
+    if (!MR || g_prep_meta.thumb_path.empty()) return;
+
+    std::string png;
+    if (!MR->fetch_thumb(g_prep_meta.thumb_path, png) || png.empty()) return;
+
+    g_prep_thumb_png = std::move(png);
+    g_prep_thumb_dsc = {};
+    g_prep_thumb_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+    g_prep_thumb_dsc.header.cf = LV_COLOR_FORMAT_ARGB8888;
+    g_prep_thumb_dsc.data = (const uint8_t*)g_prep_thumb_png.data();
+    g_prep_thumb_dsc.data_size = (uint32_t)g_prep_thumb_png.size();
+
+    lv_image_set_src(R.prep_thumb, &g_prep_thumb_dsc);
+    lv_image_set_scale(R.prep_thumb, png_scale_for(g_prep_thumb_png, 66));
+    lv_image_set_inner_align(R.prep_thumb, LV_IMAGE_ALIGN_CENTER);
+    lv_obj_remove_flag(R.prep_thumb, LV_OBJ_FLAG_HIDDEN);
+    if (R.prep_thumb_ph) lv_obj_add_flag(R.prep_thumb_ph, LV_OBJ_FLAG_HIDDEN);
+}
+
+void release_list_thumbs() {
+    g_thumb_queue.clear();
+    for (ListThumb* t : g_list_thumbs) {
+        if (!t) continue;
+        lv_image_cache_drop(&t->dsc);
+        delete t;
+    }
+    g_list_thumbs.clear();
+}
+
+void thumbs_tick() {
+    if (g_thumb_queue.empty() || !MR) return;
+    int idx = g_thumb_queue.front();
+    g_thumb_queue.pop_front();
+    if (idx < 0 || idx >= (int)g_list_thumbs.size()) return;
+    ListThumb* t = g_list_thumbs[idx];
+    if (!t || !t->img || t->path.empty()) return;
+
+    long status = 0;
+    std::string png;
+    if (!MR->fetch_thumb(t->path, png, &status)) {
+        if (status == 0) g_thumb_queue.clear();  // 连不上就别继续排了
+        return;
+    }
+    if (png.empty()) return;
+
+    t->png = std::move(png);
+    t->dsc = {};
+    t->dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+    t->dsc.header.cf = LV_COLOR_FORMAT_ARGB8888;
+    t->dsc.data = (const uint8_t*)t->png.data();
+    t->dsc.data_size = (uint32_t)t->png.size();
+
+    lv_image_set_src(t->img, &t->dsc);
+    lv_image_set_scale(t->img, png_scale_for(t->png, 32));
+    lv_image_set_inner_align(t->img, LV_IMAGE_ALIGN_CENTER);
+    lv_obj_remove_flag(t->img, LV_OBJ_FLAG_HIDDEN);
+    if (t->ph) lv_obj_add_flag(t->ph, LV_OBJ_FLAG_HIDDEN);
+}
+
+void prep_set_dot(lv_obj_t* dot, uint32_t color, bool on) {
+    if (!dot) return;
+    lv_obj_set_style_bg_color(dot, theme::c(on ? color : 0x3A3F49), 0);
+    lv_obj_set_style_bg_opa(dot, on ? LV_OPA_COVER : LV_OPA_40, 0);
+}
+
+bool prep_check(std::string& hint, bool& warn) {
+    warn = false;
+    if (!MR) {
+        hint = "打印机未连接";
+        return false;
+    }
+    PrinterState s = MR->snapshot();
+    if (!s.connected) {
+        hint = "打印机未连接";
+        return false;
+    }
+    if (s.print_state == "printing" || s.print_state == "paused") {
+        hint = "打印机正在打印，不能开始新任务";
+        return false;
+    }
+    if (MR->config().read_only) {
+        hint = "只读模式不能开始打印";
+        return false;
+    }
+
+    bool ok = true;
+    for (int k = 0; k < g_prep_used_n; k++) {
+        int i = g_prep_used[k];
+        int p = g_prep_map[i];
+        const GcodeFilament& gf = g_prep_meta.filaments[i];
+        char buf[96];
+
+        double pd = s.nozzle_diameter[p];
+        if (gf.nozzle_diameter > 0.01 && pd > 0.01 &&
+            fabs(gf.nozzle_diameter - pd) > 0.01) {
+            snprintf(buf, sizeof(buf), "E%d 是 %.1fmm 喷嘴，文件需要 %.1fmm",
+                     p + 1, pd, gf.nozzle_diameter);
+            hint = buf;
+            return false;
+        }
+        if (gf.volume_type == "high_flow" && s.nozzle_type[p] == "standard") {
+            snprintf(buf, sizeof(buf), "E%d 是标准喷嘴，文件需要高流量喷嘴", p + 1);
+            hint = buf;
+            return false;
+        }
+
+        const FilamentInfo& pf = s.filaments[p];
+        if (!pf.present) {
+            snprintf(buf, sizeof(buf), "E%d 未识别耗材，开始前请确认", p + 1);
+            hint = buf;
+            warn = true;
+        } else if (!gf.type.empty() && gf.type != "—" &&
+                   !same_ci(gf.type, pf.material)) {
+            snprintf(buf, sizeof(buf), "E%d 装的是 %s，文件需要 %s",
+                     p + 1, pf.material.c_str(), gf.type.c_str());
+            hint = buf;
+            warn = true;
+        }
+    }
+    if (ok && !warn) hint = "确认喷嘴和耗材后开始打印";
+    return ok;
+}
+
+void prep_refresh() {
+    if (!MR) return;
+    PrinterState s = MR->snapshot();
+    for (int k = 0; k < g_prep_used_n; k++) {
+        int i = g_prep_used[k];
+        int p = g_prep_map[i];
+        const FilamentInfo& f = s.filaments[p];
+        prep_set_dot(R.prep_map_dot2[i], f.argb, f.present);
+        if (R.prep_map_txt[i]) {
+            char buf[48];
+            snprintf(buf, sizeof(buf), "E%d · %s", p + 1,
+                     (f.present && !f.material.empty()) ? f.material.c_str() : "空");
+            lv_label_set_text(R.prep_map_txt[i], buf);
+            lv_obj_set_style_text_color(R.prep_map_txt[i],
+                                        theme::c(f.present ? theme::TEXT : theme::MUTED), 0);
+        }
+    }
+
+    std::string hint;
+    bool warn = false;
+    bool ok = prep_check(hint, warn);
+    if (R.prep_hint) {
+        lv_label_set_text(R.prep_hint, hint.c_str());
+        lv_obj_set_style_text_color(
+            R.prep_hint, theme::c(!ok ? theme::DANGER : (warn ? theme::WARN : theme::MUTED)), 0);
+    }
+    set_disabled(R.prep_start_btn, !ok);
+}
+
+void prep_cycle_cb(lv_event_t* e) {
+    int i = (int)(intptr_t)lv_event_get_user_data(e);
+    if (i < 0 || i > 3) return;
+    g_prep_map[i] = (g_prep_map[i] + 1) % 4;
+    prep_refresh();
+}
+
+void prep_build_rows() {
+    if (!R.prep_maps) return;
+    lv_obj_clean(R.prep_maps);
+    for (int i = 0; i < 4; i++) {
+        R.prep_map_btn[i] = nullptr;
+        R.prep_map_dot2[i] = nullptr;
+        R.prep_map_txt[i] = nullptr;
+    }
+
+    PrinterState s = MR ? MR->snapshot() : PrinterState();
+    for (int k = 0; k < g_prep_used_n; k++) {
+        int i = g_prep_used[k];
+        const GcodeFilament& gf = g_prep_meta.filaments[i];
+        char buf[64];
+
+        lv_obj_t* row = mk_obj(R.prep_maps);
+        lv_obj_set_size(row, LV_PCT(100), 32);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                              LV_FLEX_ALIGN_CENTER);
+
+        lv_obj_t* left = mk_obj(row);
+        lv_obj_set_height(left, LV_PCT(100));
+        lv_obj_set_flex_grow(left, 1);
+        lv_obj_set_flex_flow(left, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(left, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                              LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_column(left, 5, 0);
+
+        R.prep_map_dot[i] = mk_obj(left);
+        lv_obj_set_size(R.prep_map_dot[i], 10, 10);
+        lv_obj_set_style_radius(R.prep_map_dot[i], 999, 0);
+        prep_set_dot(R.prep_map_dot[i], gf.argb, gf.type != "—");
+
+        lv_obj_t* col = mk_obj(left);
+        lv_obj_set_height(col, LV_SIZE_CONTENT);
+        lv_obj_set_flex_grow(col, 1);
+        lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(col, 0, 0);
+
+        snprintf(buf, sizeof(buf), "T%d · %s", i + 1, gf.type.c_str());
+        lv_obj_t* l1 = mk_label(col, buf, 11, true, theme::TEXT);
+        lv_obj_set_width(l1, LV_PCT(100));
+        lv_obj_set_height(l1, lv_font_get_line_height(theme::font(11, true)) + 1);
+        lv_label_set_long_mode(l1, LV_LABEL_LONG_MODE_DOTS);
+
+        if (gf.weight_g >= 0.1)
+            snprintf(buf, sizeof(buf), "%.1f g", gf.weight_g);
+        else if (gf.used_mm > 0.1)
+            snprintf(buf, sizeof(buf), "%.0f mm", gf.used_mm);
+        else
+            snprintf(buf, sizeof(buf), "—");
+        lv_obj_t* l2 = mk_label(col, buf, 9, false, theme::MUTED);
+        lv_obj_set_width(l2, LV_PCT(100));
+        lv_obj_set_height(l2, lv_font_get_line_height(theme::font(9, false)) + 1);
+        lv_label_set_long_mode(l2, LV_LABEL_LONG_MODE_DOTS);
+
+        lv_obj_t* btn = lv_button_create(row);
+        lv_obj_set_size(btn, 108, 26);
+        lv_obj_set_style_radius(btn, 999, 0);
+        lv_obj_set_style_bg_color(btn, theme::c(theme::SURFACE_HI), 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(btn, 0, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
+        lv_obj_set_style_pad_hor(btn, 7, 0);
+        lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                              LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_column(btn, 4, 0);
+        R.prep_map_dot2[i] = mk_obj(btn);
+        lv_obj_set_size(R.prep_map_dot2[i], 9, 9);
+        lv_obj_set_style_radius(R.prep_map_dot2[i], 999, 0);
+        R.prep_map_txt[i] = mk_label(btn, "—", 10, false, theme::TEXT);
+        lv_obj_add_event_cb(btn, prep_cycle_cb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+        R.prep_map_btn[i] = btn;
+    }
+    prep_refresh();
+}
+
+void prep_default_map() {
+    PrinterState s = MR ? MR->snapshot() : PrinterState();
+    bool taken[4] = {false, false, false, false};
+    for (int i = 0; i < 4; i++) g_prep_map[i] = i;
+    for (int k = 0; k < g_prep_used_n; k++) {
+        int i = g_prep_used[k];
+        const std::string& want = g_prep_meta.filaments[i].type;
+        int pick = -1;
+        if (i < 4 && !taken[i] && want != "—" && s.filaments[i].present &&
+            same_ci(want, s.filaments[i].material))
+            pick = i;
+        if (pick < 0) {
+            for (int p = 0; p < 4; p++) {
+                if (taken[p] || !s.filaments[p].present) continue;
+                if (want != "—" && same_ci(want, s.filaments[p].material)) {
+                    pick = p;
+                    break;
+                }
+            }
+        }
+        if (pick < 0 && i < 4 && !taken[i]) pick = i;
+        if (pick < 0) {
+            for (int p = 0; p < 4; p++)
+                if (!taken[p]) {
+                    pick = p;
+                    break;
+                }
+        }
+        if (pick < 0) pick = i % 4;
+        taken[pick] = true;
+        g_prep_map[i] = pick;
+    }
+}
+
+void show_prepare(const GcodeMeta& meta) {
+    g_prep_meta = meta;
+    g_prep_used_n = 0;
+    for (int i = 0; i < meta.filament_count && i < 4; i++)
+        if (meta.filaments[i].used) g_prep_used[g_prep_used_n++] = i;
+    if (g_prep_used_n == 0) {
+        for (int i = 0; i < 4; i++) {
+            if (g_prep_meta.filaments[i].type.empty()) g_prep_meta.filaments[i].type = "—";
+            g_prep_used[g_prep_used_n++] = i;
+        }
+    }
+
+    std::string base = file_basename(meta.filename);
+    if (R.prep_name) lv_label_set_text(R.prep_name, base.c_str());
+    if (R.prep_time) {
+        std::string t = meta.estimated_time > 0 ? "≈ " + fmt_eta(meta.estimated_time) : "—";
+        lv_label_set_text(R.prep_time, t.c_str());
+    }
+    if (R.prep_lines) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%d 层 · 层高 %.2f mm", meta.layer_count, meta.layer_height);
+        lv_label_set_text(R.prep_lines, buf);
+    }
+    if (R.prep_height) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "高 %.1f · 喷嘴 %.1f mm", meta.object_height,
+                 meta.nozzle_diameter);
+        lv_label_set_text(R.prep_height, buf);
+    }
+    if (R.prep_filament) {
+        char buf[48];
+        if (meta.filament_weight_total > 0)
+            snprintf(buf, sizeof(buf), "耗材 %.0f g", meta.filament_weight_total);
+        else if (meta.filament_total > 0)
+            snprintf(buf, sizeof(buf), "耗材 %.1f m", meta.filament_total / 1000.0);
+        else
+            snprintf(buf, sizeof(buf), "耗材 —");
+        lv_label_set_text(R.prep_filament, buf);
+    }
+    prep_default_map();
+    prep_build_rows();
+    load_prep_thumb();
+
+    if (R.file_list_view) lv_obj_add_flag(R.file_list_view, LV_OBJ_FLAG_HIDDEN);
+    if (R.prep_view) lv_obj_remove_flag(R.prep_view, LV_OBJ_FLAG_HIDDEN);
+}
+
+void file_row_cb(lv_event_t* e) {
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    if (idx < 0 || idx >= (int)g_files.size() || !MR) return;
+    GcodeMeta meta;
+    if (!MR->gcode_metadata(g_files[idx].name, meta)) {
+        notice_error("无法读取文件信息", file_basename(g_files[idx].name));
+        return;
+    }
+    show_prepare(meta);
+}
+
+void file_more_cb(lv_event_t*) {
+    if (R.file_more_btn) {
+        lv_obj_delete(R.file_more_btn);
+        R.file_more_btn = nullptr;
+    }
+    size_t target = g_files_shown + 24;
+    while (g_files_shown < g_files.size() && g_files_shown < target) {
+        const GcodeFile& f = g_files[g_files_shown];
+        lv_obj_t* row = lv_button_create(R.file_list);
+        lv_obj_set_size(row, LV_PCT(100), 42);
+        lv_obj_set_style_radius(row, 10, 0);
+        lv_obj_set_style_bg_color(row, theme::c(theme::SURFACE_HI), 0);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_shadow_width(row, 0, 0);
+        lv_obj_set_style_pad_hor(row, 8, 0);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                              LV_FLEX_ALIGN_CENTER);
+
+        lv_obj_t* tb = mk_obj(row);
+        lv_obj_remove_flag(tb, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_size(tb, 32, 32);
+        lv_obj_set_style_radius(tb, 7, 0);
+        lv_obj_set_style_bg_color(tb, theme::c(theme::SURFACE), 0);
+        lv_obj_set_style_bg_opa(tb, LV_OPA_COVER, 0);
+        lv_obj_set_style_clip_corner(tb, true, 0);
+        lv_obj_t* ph = mk_icon(tb, IC_PRINT, 14, theme::MUTED);
+        lv_obj_center(ph);
+
+        ListThumb* th = new ListThumb;
+        th->ph = ph;
+        th->path = thumb_guess(f.name, 48);
+        th->img = lv_image_create(tb);
+        lv_obj_set_size(th->img, 32, 32);
+        lv_obj_set_style_bg_opa(th->img, LV_OPA_TRANSP, 0);
+        lv_obj_add_flag(th->img, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_center(th->img);
+        g_list_thumbs.push_back(th);
+        if (!th->path.empty()) g_thumb_queue.push_back((int)g_list_thumbs.size() - 1);
+
+        lv_obj_t* col = mk_obj(row);
+        lv_obj_remove_flag(col, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_height(col, LV_SIZE_CONTENT);
+        lv_obj_set_flex_grow(col, 1);
+        lv_obj_set_style_pad_left(col, 6, 0);
+        lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(col, 0, 0);
+
+        std::string base = file_basename(f.name);
+        lv_obj_t* name = mk_label(col, base.c_str(), 12, true, theme::TEXT);
+        lv_obj_set_width(name, LV_PCT(100));
+        lv_obj_set_height(name, lv_font_get_line_height(theme::font(12, true)) + 1);
+        lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
+
+        std::string sub = fmt_size(f.size) + " · " + fmt_date(f.modified);
+        lv_obj_t* line = mk_label(col, sub.c_str(), 9, false, theme::MUTED);
+        lv_obj_set_width(line, LV_PCT(100));
+        lv_obj_set_height(line, lv_font_get_line_height(theme::font(9, false)) + 1);
+        lv_label_set_long_mode(line, LV_LABEL_LONG_MODE_DOTS);
+
+        mk_icon(row, IC_CHEVRON_RIGHT, 14, theme::MUTED);
+        lv_obj_add_event_cb(row, file_row_cb, LV_EVENT_CLICKED,
+                            (void*)(intptr_t)g_files_shown);
+        g_files_shown++;
+    }
+
+    if (g_files_shown < g_files.size()) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "还有 %d 个 · 点击加载更多",
+                 (int)(g_files.size() - g_files_shown));
+        lv_obj_t* more = lv_button_create(R.file_list);
+        lv_obj_set_size(more, LV_PCT(100), 32);
+        lv_obj_set_style_radius(more, 10, 0);
+        lv_obj_set_style_bg_color(more, theme::c(theme::SURFACE), 0);
+        lv_obj_set_style_bg_opa(more, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(more, 0, 0);
+        lv_obj_set_style_shadow_width(more, 0, 0);
+        lv_obj_t* lb = mk_label(more, buf, 10, false, theme::MUTED);
+        lv_obj_center(lb);
+        lv_obj_add_event_cb(more, file_more_cb, LV_EVENT_CLICKED, nullptr);
+        R.file_more_btn = more;
+    }
+}
+
+void close_file_sheet_cb(lv_event_t*) {
+    if (R.file_sheet) lv_obj_add_flag(R.file_sheet, LV_OBJ_FLAG_HIDDEN);
+}
+
+void prep_back_cb(lv_event_t*) {
+    if (R.prep_view) lv_obj_add_flag(R.prep_view, LV_OBJ_FLAG_HIDDEN);
+    if (R.file_list_view) lv_obj_remove_flag(R.file_list_view, LV_OBJ_FLAG_HIDDEN);
+}
+
+void prep_start_cb(lv_event_t*) {
+    std::string hint;
+    bool warn = false;
+    if (!MR) return;
+    if (!prep_check(hint, warn)) {
+        notice_error("不能开始打印", hint);
+        return;
+    }
+    if (!MR->start_print(g_prep_meta, g_prep_map)) {
+        notice_error("开始打印失败", "打印机未连接或只读模式");
+        return;
+    }
+    g_start_pending_until = lv_tick_get() + 8000;
+    g_start_file = file_basename(g_prep_meta.filename);
+    if (R.status_title) lv_label_set_text(R.status_title, "启动中");
+    if (R.status_sub) lv_label_set_text(R.status_sub, g_start_file.c_str());
+    if (R.status_sub2) lv_label_set_text(R.status_sub2, "正在加载文件…");
+    close_file_sheet_cb(nullptr);
+    show_toast("已发送开始打印");
+}
+
+void open_file_list() {
+    if (!R.file_sheet) return;
+    g_files = MR ? MR->list_gcode_files() : std::vector<GcodeFile>();
+    g_files_shown = 0;
+    g_thumb_queue.clear();
+    if (R.file_list) {
+        lv_obj_clean(R.file_list);
+        lv_obj_scroll_to_y(R.file_list, 0, LV_ANIM_OFF);
+    }
+    release_list_thumbs();
+    R.file_more_btn = nullptr;
+
+    if (R.file_count) {
+        char buf[64];
+        if (!MR) snprintf(buf, sizeof(buf), "未连接");
+        else snprintf(buf, sizeof(buf), "%d 个文件", (int)g_files.size());
+        lv_label_set_text(R.file_count, buf);
+    }
+
+    if (g_files.empty()) {
+        lv_obj_t* empty = mk_label(R.file_list,
+                                   MR ? "没有找到 G-code 文件" : "打印机未连接",
+                                   12, false, theme::MUTED);
+        lv_obj_set_width(empty, LV_PCT(100));
+        lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_pad_top(empty, 40, 0);
+    } else {
+        file_more_cb(nullptr);
+    }
+
+    if (R.prep_view) lv_obj_add_flag(R.prep_view, LV_OBJ_FLAG_HIDDEN);
+    if (R.file_list_view) lv_obj_remove_flag(R.file_list_view, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(R.file_sheet, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_to_index(R.file_sheet, -1);
+}
+
+void open_prepare_index(int idx) {
+    if (!R.file_sheet) return;
+    if (idx < 0 || idx >= (int)g_files.size()) return;
+    GcodeMeta meta;
+    if (!MR || !MR->gcode_metadata(g_files[idx].name, meta)) return;
+    show_prepare(meta);
+    lv_obj_remove_flag(R.file_sheet, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_to_index(R.file_sheet, -1);
+}
+
+void build_file_sheet(lv_obj_t* screen) {
+    lv_obj_t* sh = mk_overlay(screen);
+    R.file_sheet = sh;
+
+    // ---------- 文件列表 ----------
+    lv_obj_t* list_view = mk_obj(sh);
+    lv_obj_set_size(list_view, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_flex_flow(list_view, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(list_view, 6, 0);
+    R.file_list_view = list_view;
+
+    lv_obj_t* head = mk_obj(list_view);
+    lv_obj_set_size(head, LV_PCT(100), 30);
+    lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(head, 8, 0);
+    mk_back_button(head, close_file_sheet_cb);
+    mk_label(head, "选择文件", 20, true, theme::TEXT);
+    lv_obj_t* spacer = mk_obj(head);
+    lv_obj_set_flex_grow(spacer, 1);
+    lv_obj_set_height(spacer, 1);
+    R.file_count = mk_label(head, "", 10, false, theme::MUTED);
+
+    lv_obj_t* card = mk_card(list_view, theme::SURFACE);
+    lv_obj_set_width(card, LV_PCT(100));
+    lv_obj_set_flex_grow(card, 1);
+    lv_obj_set_style_pad_all(card, 6, 0);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(card, 5, 0);
+    lv_obj_add_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(card, LV_DIR_VER);
+    R.file_list = card;
+
+    // ---------- 准备打印 ----------
+    lv_obj_t* pv = mk_obj(sh);
+    lv_obj_set_size(pv, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_flex_flow(pv, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(pv, 5, 0);
+    lv_obj_add_flag(pv, LV_OBJ_FLAG_HIDDEN);
+    R.prep_view = pv;
+
+    lv_obj_t* ph = mk_obj(pv);
+    lv_obj_set_size(ph, LV_PCT(100), 30);
+    lv_obj_set_flex_flow(ph, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(ph, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(ph, 8, 0);
+    mk_back_button(ph, prep_back_cb);
+    mk_label(ph, "准备打印", 20, true, theme::TEXT);
+
+    lv_obj_t* body = mk_obj(pv);
+    lv_obj_set_width(body, LV_PCT(100));
+    lv_obj_set_flex_grow(body, 1);
+    lv_obj_set_flex_flow(body, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(body, 8, 0);
+
+    // 左：文件信息
+    lv_obj_t* info = mk_card(body, theme::SURFACE);
+    lv_obj_set_size(info, 160, LV_PCT(100));
+    lv_obj_set_flex_flow(info, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(info, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(info, 1, 0);
+    lv_obj_set_style_pad_all(info, 6, 0);
+
+    lv_obj_t* tbox = mk_obj(info);
+    lv_obj_set_size(tbox, 66, 66);
+    lv_obj_set_style_radius(tbox, 8, 0);
+    lv_obj_set_style_bg_color(tbox, theme::c(theme::SURFACE_HI), 0);
+    lv_obj_set_style_bg_opa(tbox, LV_OPA_COVER, 0);
+    lv_obj_set_style_clip_corner(tbox, true, 0);
+    R.prep_thumb_ph = mk_icon(tbox, IC_PRINT, 24, theme::MUTED);
+    lv_obj_center(R.prep_thumb_ph);
+    R.prep_thumb = lv_image_create(tbox);
+    lv_obj_set_size(R.prep_thumb, 66, 66);
+    lv_obj_set_style_bg_opa(R.prep_thumb, LV_OPA_TRANSP, 0);
+    lv_obj_add_flag(R.prep_thumb, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_center(R.prep_thumb);
+
+    R.prep_name = mk_label(info, "—", 12, true, theme::TEXT);
+    lv_obj_set_width(R.prep_name, LV_PCT(100));
+    lv_obj_set_height(R.prep_name, 34);
+    lv_label_set_long_mode(R.prep_name, LV_LABEL_LONG_MODE_WRAP);
+
+    R.prep_time = mk_label(info, "—", 16, true, theme::PRIMARY);
+    lv_obj_set_width(R.prep_time, LV_PCT(100));
+    R.prep_lines = mk_label(info, "—", 10, false, theme::MUTED);
+    lv_obj_set_width(R.prep_lines, LV_PCT(100));
+    lv_label_set_long_mode(R.prep_lines, LV_LABEL_LONG_MODE_DOTS);
+    R.prep_height = mk_label(info, "", 10, false, theme::MUTED);
+    lv_obj_set_width(R.prep_height, LV_PCT(100));
+    lv_label_set_long_mode(R.prep_height, LV_LABEL_LONG_MODE_DOTS);
+    R.prep_filament = mk_label(info, "", 10, false, theme::MUTED);
+    lv_obj_set_width(R.prep_filament, LV_PCT(100));
+    lv_label_set_long_mode(R.prep_filament, LV_LABEL_LONG_MODE_DOTS);
+
+    // 右：耗材映射
+    lv_obj_t* map_card = mk_card(body, theme::SURFACE);
+    lv_obj_set_height(map_card, LV_PCT(100));
+    lv_obj_set_flex_grow(map_card, 1);
+    lv_obj_set_flex_flow(map_card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_all(map_card, 8, 0);
+    lv_obj_set_style_pad_row(map_card, 3, 0);
+
+    lv_obj_t* mh = mk_obj(map_card);
+    lv_obj_set_size(mh, LV_PCT(100), 18);
+    lv_obj_set_flex_flow(mh, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(mh, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    mk_label(mh, "耗材映射", 13, true, theme::TEXT);
+    mk_label(mh, "点右侧切换", 9, false, theme::MUTED);
+
+    R.prep_maps = mk_obj(map_card);
+    lv_obj_set_width(R.prep_maps, LV_PCT(100));
+    lv_obj_set_flex_grow(R.prep_maps, 1);
+    lv_obj_set_flex_flow(R.prep_maps, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(R.prep_maps, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(R.prep_maps, 4, 0);
+
+    R.prep_hint = mk_label(pv, "确认喷嘴和耗材后开始打印", 10, false, theme::MUTED);
+    lv_obj_set_width(R.prep_hint, LV_PCT(100));
+    lv_obj_set_height(R.prep_hint, lv_font_get_line_height(theme::font(10, false)) + 1);
+    lv_label_set_long_mode(R.prep_hint, LV_LABEL_LONG_MODE_DOTS);
+
+    R.prep_start_btn = mk_button(pv, "开始打印", true, prep_start_cb, nullptr, 38);
+    lv_obj_set_flex_grow(R.prep_start_btn, 0);
+    lv_obj_set_width(R.prep_start_btn, LV_PCT(100));
+    R.prep_start_txt = lv_obj_get_child(R.prep_start_btn, 0);
+    lv_obj_set_style_text_font(R.prep_start_txt, theme::font(14, true), 0);
 }
 
 // ---------------------------------------------------------------- 控制页
@@ -3066,7 +3822,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.6 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.7 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）
@@ -3858,9 +4614,11 @@ void ui_init(Moonraker* mr, lv_obj_t* screen, Wifi* wifi) {
     build_keypad(screen);
     build_nozzle_page(screen);
     build_print_sheet(screen);
+    build_file_sheet(screen);
     build_net_page(screen);
     build_feed_banner(screen);
     lv_timer_create([](lv_timer_t* t) { feed_icons_tick(t); }, 60, nullptr);
+    lv_timer_create([](lv_timer_t*) { thumbs_tick(); }, 40, nullptr);
 
     // 轻提示（操作回退时用）
     lv_obj_t* toast = mk_obj(screen);
@@ -3912,6 +4670,21 @@ void ui_open_net() {
 
 void ui_open_print() {
     open_print_sheet_cb(nullptr);
+}
+
+void ui_open_files() {
+    open_file_list();
+}
+
+void ui_prepare_file(int index) {
+    if (g_files.empty()) open_file_list();
+    open_prepare_index(index);
+}
+
+void ui_start_prepared(int index) {
+    if (g_files.empty()) open_file_list();
+    open_prepare_index(index);
+    prep_start_cb(nullptr);
 }
 
 void ui_fan_page(int p) {
@@ -4023,11 +4796,21 @@ void ui_tick() {
     set_disabled(R.home_stop_btn, !active);
     if (R.home_pause_text) lv_label_set_text(R.home_pause_text, paused ? "继续" : "暂停");
     if (R.home_pause_icon) lv_label_set_text(R.home_pause_icon, paused ? IC_PLAY : IC_PAUSE);
-    const char* state_txt = printing ? "打印中" : (paused ? "已暂停" : "待机");
+    bool starting = false;
+    if (!printing && !paused && g_start_pending_until) {
+        if ((int32_t)(g_start_pending_until - lv_tick_get()) > 0) starting = true;
+        else g_start_pending_until = 0;
+    }
+    if (printing || paused) g_start_pending_until = 0;
+
+    const char* state_txt = starting ? "启动中"
+                                     : (printing ? "打印中" : (paused ? "已暂停" : "待机"));
 
     if (R.status_title) lv_label_set_text(R.status_title, state_txt);
     if (R.status_sub) {
-        if (printing || paused) {
+        if (starting) {
+            lv_label_set_text(R.status_sub, g_start_file.c_str());
+        } else if (printing || paused) {
             std::string name = short_name(s.filename);
             lv_label_set_text(R.status_sub, name.c_str());
         } else {
@@ -4036,13 +4819,21 @@ void ui_tick() {
     }
     if (R.status_sub2) {
         char buf[64];
-        if (printing || paused) {
+        if (starting) {
+            lv_label_set_text(R.status_sub2, "正在加载文件…");
+        } else if (printing || paused) {
             snprintf(buf, sizeof(buf), "%d/%d 层 · %s", s.layer, s.layers,
                      fmt_time(s.print_duration).c_str());
             lv_label_set_text(R.status_sub2, buf);
         } else {
             lv_label_set_text(R.status_sub2, "");
         }
+    }
+    if (R.status_hint) {
+        lv_label_set_text(R.status_hint,
+                          (printing || paused) ? "点此调整速度 / Z-offset"
+                                                : (starting ? "正在准备打印…"
+                                                            : "点此选择文件开始打印"));
     }
     if (R.status_arc) {
         lv_arc_set_value(R.status_arc, (int)(s.progress * 1000));
