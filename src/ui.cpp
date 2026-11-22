@@ -27,6 +27,7 @@ constexpr const char* IC_CHECK = "\U000F012C";
 constexpr const char* IC_LIGHT = "\U000F0335";
 constexpr const char* IC_NFC = "\U000F0396";
 constexpr const char* IC_CLOSE = "\U000F0156";
+constexpr const char* IC_INFO = "\U000F02FC";
 constexpr const char* IC_LOAD = "\U000F0120";
 constexpr const char* IC_UNLOAD = "\U000F011D";
 constexpr const char* IC_PALETTE = "\U000F03D8";
@@ -85,7 +86,6 @@ const uint32_t kPalette[28] = {
 
 void update_sheet();
 void update_nozzle_page();
-void show_toast(const char* msg);
 void open_print_sheet_cb(lv_event_t* e);
 void home_status_cb(lv_event_t* e);
 void ctrl_tab_cb(lv_event_t* e);
@@ -97,6 +97,7 @@ void feed_tick(const PrinterState& s);
 void notice_show(bool error, bool success, const char* icon, const std::string& title,
                  const std::string& sub, uint32_t duration_ms);
 void notice_error(const std::string& title, const std::string& sub);
+void notice_info(const std::string& title, const std::string& sub);
 void update_feed_banner_pos();
 void feed_banner_gesture_cb(lv_event_t* e);
 void open_net_page();
@@ -143,7 +144,6 @@ std::string g_net_last_error;
 std::string g_net_target;
 bool g_wifi_restart_seen = false;
 
-uint32_t g_toast_until = 0;
 std::vector<std::string> g_brands;
 
 // 喷嘴参数的乐观值：等轮询结果和本地值一致（或 8 秒超时）再解除
@@ -229,8 +229,6 @@ struct Refs {
     lv_obj_t* color_sw[28] = {};
 
     // 轻提示
-    lv_obj_t* toast = nullptr;
-    lv_obj_t* toast_label = nullptr;
     lv_obj_t* print_arc = nullptr;
     lv_obj_t* print_pct = nullptr;
     lv_obj_t* print_file = nullptr;
@@ -939,14 +937,6 @@ void load_custom_materials() {
         }
     }
     fclose(f);
-}
-
-void show_toast(const char* msg) {
-    if (!R.toast || !R.toast_label) return;
-    lv_label_set_text(R.toast_label, msg);
-    lv_obj_remove_flag(R.toast, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_to_index(R.toast, -1);
-    g_toast_until = lv_tick_get() + 2600;
 }
 
 void apply_light_ui(bool on) {
@@ -3064,7 +3054,7 @@ void prep_start_cb(lv_event_t*) {
     if (R.status_sub) lv_label_set_text(R.status_sub, g_start_file.c_str());
     if (R.status_sub2) lv_label_set_text(R.status_sub2, "正在加载文件…");
     close_file_sheet_cb(nullptr);
-    show_toast("已发送开始打印");
+    notice_show(false, true, IC_PRINT, "已开始打印", g_start_file, 4000);
 }
 
 void open_file_list() {
@@ -3822,7 +3812,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.7 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.8 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）
@@ -3933,13 +3923,13 @@ void net_pw_connect_cb(lv_event_t*) {
     if (!WIFI || !R.net_pw_ta) return;
     const char* pass = lv_textarea_get_text(R.net_pw_ta);
     if (!pass || !*pass) {
-        show_toast("请输入 Wi-Fi 密码");
+        notice_info("请输入 Wi-Fi 密码", "密码不能为空");
         return;
     }
     g_net_target = g_net_pw_ssid;
     WIFI->request_connect(g_net_pw_ssid, pass, g_net_pw_sae);
     net_pw_close_cb(nullptr);
-    show_toast("正在连接…");
+    notice_info("正在连接 Wi-Fi…", g_net_pw_ssid);
 }
 
 void net_pw_kb_cb(lv_event_t* e) {
@@ -3972,7 +3962,7 @@ void net_row_cb(lv_event_t* e) {
     } else {
         g_net_target = pick->ssid;
         WIFI->request_connect(pick->ssid, "", false);
-        show_toast("正在连接…");
+        notice_info("正在连接 Wi-Fi…", pick->ssid);
     }
 }
 
@@ -4084,14 +4074,14 @@ void net_refresh_cb(lv_event_t*) {
 
 void net_disconnect_cb(lv_event_t*) {
     if (WIFI) WIFI->request_disconnect();
-    show_toast("已断开 Wi-Fi");
+    notice_info("已断开 Wi-Fi", "网络连接已关闭");
 }
 
 void net_reconnect_cb(lv_event_t*) {
     if (!WIFI) return;
     WifiSnapshot s = WIFI->snapshot();
     if (s.restarting) {
-        show_toast("Wi-Fi 服务正在重启…");
+        notice_info("Wi-Fi 服务正在重启…", "请稍候");
         return;
     }
     if (!s.available) {
@@ -4102,7 +4092,7 @@ void net_reconnect_cb(lv_event_t*) {
         return;
     }
     WIFI->request_reconnect();
-    show_toast("正在重新连接…");
+    notice_info("正在重新连接…", g_net_target);
 }
 
 void open_net_page() {
@@ -4331,7 +4321,15 @@ void feed_banner_gesture_cb(lv_event_t*) {
 void notice_show(bool error, bool success, const char* icon, const std::string& title,
                  const std::string& sub, uint32_t duration_ms) {
     feed_banner_set(error, success, icon, title.c_str(), sub.c_str());
+    // 有时长的普通提示不转圈；持续通知（duration=0）才显示进度动画
+    if (R.feed_banner_spin && !error && !success && duration_ms != 0)
+        lv_obj_add_flag(R.feed_banner_spin, LV_OBJ_FLAG_HIDDEN);
     g_notice_until = duration_ms ? lv_tick_get() + duration_ms : 0;
+}
+
+void notice_info(const std::string& title, const std::string& sub) {
+    g_feed_dismissed = false;
+    notice_show(false, false, IC_INFO, title, sub, 4000);
 }
 
 void notice_error(const std::string& title, const std::string& sub) {
@@ -4466,24 +4464,12 @@ void feed_icons_tick(lv_timer_t*) {
     }
 }
 
-bool any_overlay_visible() {
-    auto vis = [](lv_obj_t* o) { return o && !lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN); };
-    return vis(R.sheet) || vis(R.picker) || vis(R.temp_page) || vis(R.scrim) ||
-           vis(R.keypad) || vis(R.nz_page) || vis(R.color_page) || vis(R.net_page) ||
-           vis(R.net_pw_page) || vis(R.print_sheet);
-}
-
 void update_feed_banner_pos() {
     if (!R.feed_banner) return;
     const char* rail_env = getenv("SKREEU1_RAIL");
     const bool rail_right = rail_env && std::string(rail_env) == "right";
-    (void)any_overlay_visible;
-    int y = 6;
-    if (!any_overlay_visible()) {
-        if (active_page == 0) y = 42;       // 首页：别挡标题
-        else if (active_page == 1) y = 48;  // 控制页：别挡子标签
-    }
-    lv_obj_align(R.feed_banner, LV_ALIGN_TOP_MID, rail_right ? -36 : 36, y);
+    // 所有页面和浮层都用同一个挂顶位置，避免通知忽高忽低
+    lv_obj_align(R.feed_banner, LV_ALIGN_TOP_MID, rail_right ? -36 : 36, 6);
 }
 
 void build_feed_banner(lv_obj_t* screen) {
@@ -4620,24 +4606,6 @@ void ui_init(Moonraker* mr, lv_obj_t* screen, Wifi* wifi) {
     lv_timer_create([](lv_timer_t* t) { feed_icons_tick(t); }, 60, nullptr);
     lv_timer_create([](lv_timer_t*) { thumbs_tick(); }, 40, nullptr);
 
-    // 轻提示（操作回退时用）
-    lv_obj_t* toast = mk_obj(screen);
-    lv_obj_set_size(toast, LV_SIZE_CONTENT, 34);
-    lv_obj_align(toast, LV_ALIGN_BOTTOM_MID, rail_right ? -36 : 36, -18);
-    lv_obj_set_style_bg_color(toast, theme::c(theme::SURFACE_HI), 0);
-    lv_obj_set_style_bg_opa(toast, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(toast, 999, 0);
-    lv_obj_set_style_pad_hor(toast, 14, 0);
-    lv_obj_set_style_border_width(toast, 1, 0);
-    lv_obj_set_style_border_color(toast, theme::c(theme::OUTLINE), 0);
-    lv_obj_set_style_shadow_width(toast, 14, 0);
-    lv_obj_set_style_shadow_opa(toast, LV_OPA_40, 0);
-    lv_obj_set_style_shadow_color(toast, theme::c(0x000000), 0);
-    R.toast_label = mk_label(toast, "", 12, false, theme::TEXT);
-    lv_obj_center(R.toast_label);
-    lv_obj_add_flag(toast, LV_OBJ_FLAG_HIDDEN);
-    R.toast = toast;
-
     ui_show(0);
     style_nav(0);
 }
@@ -4717,7 +4685,7 @@ void ui_open_color() {
 }
 
 void ui_toast(const char* msg) {
-    show_toast(msg);
+    notice_info(msg, "");
 }
 
 void ui_show(int page) {
@@ -4771,11 +4739,6 @@ void ui_tick() {
                 notice_error("Wi-Fi 恢复失败", "请检查路由器或重启打印机");
         }
         if (g_net_open) net_refresh_ui(w);
-    }
-
-    if (R.toast && g_toast_until && lv_tick_get() > g_toast_until) {
-        lv_obj_add_flag(R.toast, LV_OBJ_FLAG_HIDDEN);
-        g_toast_until = 0;
     }
 
     // connection chip

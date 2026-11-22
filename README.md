@@ -130,7 +130,7 @@ scripts/run_vnc.sh --host 192.168.1.50 --readonly
 | `--keypad [--slot N]` | 打开数字键盘（`--slot` 为快捷温度槽位） |
 | `--picker` | 打开材料选择 |
 | `--nozzle` | 打开喷嘴参数弹层 |
-| `--color` / `--toast` | 打开颜色面板 / 显示提示条 |
+| `--color` / `--toast` | 打开颜色面板 / 显示顶部通知 |
 | `--bench N` | 整屏重绘基准（平均 ms/帧、等效 fps） |
 
 ## 交叉编译（aarch64 / Buildroot）
