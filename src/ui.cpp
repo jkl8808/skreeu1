@@ -1689,7 +1689,7 @@ void build_color_page(lv_obj_t* screen) {
     R.color_scrim = scrim;
 
     lv_obj_t* pg = mk_obj(screen);
-    lv_obj_set_size(pg, 330, 210);
+    lv_obj_set_size(pg, 330, 220);
     lv_obj_align(pg, LV_ALIGN_CENTER, rail_right ? -36 : 36, 0);
     lv_obj_set_style_bg_color(pg, theme::c(theme::SURFACE_HI), 0);
     lv_obj_set_style_bg_opa(pg, LV_OPA_COVER, 0);
@@ -1715,7 +1715,7 @@ void build_color_page(lv_obj_t* screen) {
     mk_label(head, "选择颜色", 18, true, theme::TEXT);
 
     lv_obj_t* grid = mk_obj(pg);
-    lv_obj_set_size(grid, LV_PCT(100), 150);
+    lv_obj_set_size(grid, LV_PCT(100), 160);
     lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_START);
@@ -2657,8 +2657,8 @@ void build_control_move(lv_obj_t* p) {
     R.move_btn[4] = zm;
     lv_obj_set_width(zp, LV_PCT(100));
     lv_obj_set_width(zm, LV_PCT(100));
-    lv_obj_set_height(zp, 80);
-    lv_obj_set_height(zm, 80);
+    lv_obj_set_height(zp, 74);
+    lv_obj_set_height(zm, 74);
 
     lv_obj_t* br = mk_obj(p);
     lv_obj_set_size(br, LV_PCT(100), 40);
@@ -2993,7 +2993,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.4 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.5 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）
@@ -3735,6 +3735,8 @@ void ui_init(Moonraker* mr, lv_obj_t* screen, Wifi* wifi) {
     for (int i = 0; i < 4; i++) {
         lv_obj_set_size(pages[i], LV_PCT(100), LV_PCT(100));
         lv_obj_add_flag(pages[i], LV_OBJ_FLAG_SCROLLABLE);
+        // 可滚动页底部留一点余量，最后一张卡不要贴着屏幕边
+        lv_obj_set_style_pad_bottom(pages[i], 14, 0);
     }
 
     build_home(pages[0]);
