@@ -27,7 +27,6 @@ constexpr const char* IC_CHECK = "\U000F012C";
 constexpr const char* IC_LIGHT = "\U000F0335";
 constexpr const char* IC_NFC = "\U000F0396";
 constexpr const char* IC_CLOSE = "\U000F0156";
-constexpr const char* IC_INFO = "\U000F02FC";
 constexpr const char* IC_LOAD = "\U000F0120";
 constexpr const char* IC_UNLOAD = "\U000F011D";
 constexpr const char* IC_PALETTE = "\U000F03D8";
@@ -97,7 +96,8 @@ void feed_tick(const PrinterState& s);
 void notice_show(bool error, bool success, const char* icon, const std::string& title,
                  const std::string& sub, uint32_t duration_ms);
 void notice_error(const std::string& title, const std::string& sub);
-void notice_info(const std::string& title, const std::string& sub);
+void notice_ok(const std::string& title, const std::string& sub);
+void notice_wifi(const std::string& title, const std::string& sub);
 void update_feed_banner_pos();
 void feed_banner_gesture_cb(lv_event_t* e);
 void open_net_page();
@@ -3054,7 +3054,7 @@ void prep_start_cb(lv_event_t*) {
     if (R.status_sub) lv_label_set_text(R.status_sub, g_start_file.c_str());
     if (R.status_sub2) lv_label_set_text(R.status_sub2, "正在加载文件…");
     close_file_sheet_cb(nullptr);
-    notice_show(false, true, IC_PRINT, "已开始打印", g_start_file, 4000);
+    notice_ok("已开始打印", g_start_file);
 }
 
 void open_file_list() {
@@ -3812,7 +3812,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.8 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.9 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）
@@ -3923,13 +3923,13 @@ void net_pw_connect_cb(lv_event_t*) {
     if (!WIFI || !R.net_pw_ta) return;
     const char* pass = lv_textarea_get_text(R.net_pw_ta);
     if (!pass || !*pass) {
-        notice_info("请输入 Wi-Fi 密码", "密码不能为空");
+        notice_error("请输入 Wi-Fi 密码", "密码不能为空");
         return;
     }
     g_net_target = g_net_pw_ssid;
     WIFI->request_connect(g_net_pw_ssid, pass, g_net_pw_sae);
     net_pw_close_cb(nullptr);
-    notice_info("正在连接 Wi-Fi…", g_net_pw_ssid);
+    notice_wifi("正在连接 Wi-Fi…", g_net_pw_ssid);
 }
 
 void net_pw_kb_cb(lv_event_t* e) {
@@ -3962,7 +3962,7 @@ void net_row_cb(lv_event_t* e) {
     } else {
         g_net_target = pick->ssid;
         WIFI->request_connect(pick->ssid, "", false);
-        notice_info("正在连接 Wi-Fi…", pick->ssid);
+        notice_wifi("正在连接 Wi-Fi…", pick->ssid);
     }
 }
 
@@ -4074,14 +4074,14 @@ void net_refresh_cb(lv_event_t*) {
 
 void net_disconnect_cb(lv_event_t*) {
     if (WIFI) WIFI->request_disconnect();
-    notice_info("已断开 Wi-Fi", "网络连接已关闭");
+    notice_ok("已断开 Wi-Fi", "网络连接已关闭");
 }
 
 void net_reconnect_cb(lv_event_t*) {
     if (!WIFI) return;
     WifiSnapshot s = WIFI->snapshot();
     if (s.restarting) {
-        notice_info("Wi-Fi 服务正在重启…", "请稍候");
+        notice_wifi("Wi-Fi 服务正在重启…", "请稍候");
         return;
     }
     if (!s.available) {
@@ -4092,7 +4092,7 @@ void net_reconnect_cb(lv_event_t*) {
         return;
     }
     WIFI->request_reconnect();
-    notice_info("正在重新连接…", g_net_target);
+    notice_wifi("正在重新连接…", g_net_target);
 }
 
 void open_net_page() {
@@ -4327,9 +4327,14 @@ void notice_show(bool error, bool success, const char* icon, const std::string& 
     g_notice_until = duration_ms ? lv_tick_get() + duration_ms : 0;
 }
 
-void notice_info(const std::string& title, const std::string& sub) {
+void notice_ok(const std::string& title, const std::string& sub) {
     g_feed_dismissed = false;
-    notice_show(false, false, IC_INFO, title, sub, 4000);
+    notice_show(false, true, IC_CHECK_CIRCLE, title, sub, 4000);
+}
+
+void notice_wifi(const std::string& title, const std::string& sub) {
+    g_feed_dismissed = false;
+    notice_show(false, false, IC_WIFI, title, sub, 4000);
 }
 
 void notice_error(const std::string& title, const std::string& sub) {
@@ -4685,7 +4690,7 @@ void ui_open_color() {
 }
 
 void ui_toast(const char* msg) {
-    notice_info(msg, "");
+    notice_ok(msg, "");
 }
 
 void ui_show(int page) {

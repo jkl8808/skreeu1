@@ -393,7 +393,7 @@ int main(int argc, char** argv) {
             render_frames(6);
         }
         if (toast) {
-            ui_toast("自动进料切换失败，已恢复");
+            ui_toast("自动进料已恢复");
             render_frames(6);
         }
         if (scroll != 0) {
