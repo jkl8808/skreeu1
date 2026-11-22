@@ -281,9 +281,12 @@ struct Refs {
 
     // 首页快捷打印
     lv_obj_t* home_pause_btn = nullptr;
-    lv_obj_t* home_resume_btn = nullptr;
+    lv_obj_t* home_pause_icon = nullptr;
+    lv_obj_t* home_pause_text = nullptr;
     lv_obj_t* home_stop_btn = nullptr;
-    lv_obj_t* home_print_btn = nullptr;
+    lv_obj_t* home_light_btn = nullptr;
+    lv_obj_t* home_light_icon = nullptr;
+    lv_obj_t* home_light_text = nullptr;
 
     // 打印控制浮层
     lv_obj_t* print_sheet = nullptr;
@@ -903,6 +906,15 @@ void apply_light_ui(bool on) {
                                     theme::c(on ? theme::PRIMARY : theme::MUTED), 0);
     if (R.ctrl_light_text)
         lv_obj_set_style_text_color(R.ctrl_light_text,
+                                    theme::c(on ? theme::TEXT : theme::MUTED), 0);
+    if (R.home_light_btn)
+        lv_obj_set_style_bg_color(R.home_light_btn,
+                                  theme::c(on ? theme::PRIMARY_DIM : theme::SURFACE), 0);
+    if (R.home_light_icon)
+        lv_obj_set_style_text_color(R.home_light_icon,
+                                    theme::c(on ? theme::PRIMARY : theme::MUTED), 0);
+    if (R.home_light_text)
+        lv_obj_set_style_text_color(R.home_light_text,
                                     theme::c(on ? theme::TEXT : theme::MUTED), 0);
 }
 
@@ -2256,6 +2268,40 @@ void update_sheet() {
 
 // ---------------------------------------------------------------- pages
 
+void home_pause_cb(lv_event_t*) {
+    if (!MR) return;
+    PrinterState st = MR->snapshot();
+    if (st.print_state == "printing")
+        send_action("PAUSE");
+    else if (st.print_state == "paused")
+        send_action("RESUME");
+}
+
+void home_stop_cb(lv_event_t*) { send_action("CANCEL_PRINT"); }
+
+lv_obj_t* mk_home_quick(lv_obj_t* parent, const char* icon, const char* label,
+                        lv_event_cb_t cb, lv_obj_t** icon_out, lv_obj_t** text_out) {
+    lv_obj_t* b = lv_button_create(parent);
+    lv_obj_set_width(b, LV_PCT(100));
+    lv_obj_set_flex_grow(b, 1);
+    lv_obj_set_style_radius(b, 14, 0);
+    lv_obj_set_style_bg_color(b, theme::c(theme::SURFACE), 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(b, 0, 0);
+    lv_obj_set_style_shadow_width(b, 0, 0);
+    lv_obj_set_style_pad_all(b, 4, 0);
+    lv_obj_set_flex_flow(b, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(b, 2, 0);
+    lv_obj_t* ic = mk_icon(b, icon, 22, theme::PRIMARY);
+    lv_obj_t* tx = mk_label(b, label, 11, false, theme::TEXT);
+    if (icon_out) *icon_out = ic;
+    if (text_out) *text_out = tx;
+    if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+    return b;
+}
+
 void build_home(lv_obj_t* p) {
     lv_obj_set_flex_flow(p, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(p, 6, 0);
@@ -2276,30 +2322,45 @@ void build_home(lv_obj_t* p) {
     R.conn_state = mk_label(chip, "连接中", 13, false, theme::MUTED);
     lv_obj_center(R.conn_state);
 
-    // 大状态卡：点开打印控制浮层
-    R.status_card = mk_card(p, theme::SURFACE_HI);
-    lv_obj_set_size(R.status_card, LV_PCT(100), 190);
+    lv_obj_t* body = mk_obj(p);
+    lv_obj_set_width(body, LV_PCT(100));
+    lv_obj_set_flex_grow(body, 1);
+    lv_obj_set_flex_flow(body, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(body, 8, 0);
+
+    // 左边 3/4：状态 + 打印快捷
+    lv_obj_t* left = mk_obj(body);
+    lv_obj_set_height(left, LV_PCT(100));
+    lv_obj_set_flex_grow(left, 3);
+    lv_obj_set_flex_flow(left, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(left, 6, 0);
+
+    R.status_card = mk_card(left, theme::SURFACE_HI);
+    lv_obj_set_width(R.status_card, LV_PCT(100));
+    lv_obj_set_flex_grow(R.status_card, 1);
     lv_obj_set_flex_flow(R.status_card, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(R.status_card, LV_FLEX_ALIGN_SPACE_BETWEEN,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_add_flag(R.status_card, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(R.status_card, open_print_sheet_cb, LV_EVENT_CLICKED, nullptr);
 
-    lv_obj_t* left = mk_obj(R.status_card);
-    lv_obj_remove_flag(left, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_height(left, LV_SIZE_CONTENT);
-    lv_obj_set_flex_grow(left, 1);
-    lv_obj_set_style_pad_right(left, 8, 0);
-    lv_obj_set_flex_flow(left, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(left, 2, 0);
-    R.status_title = mk_label(left, "待机", 26, true, theme::TEXT);
-    R.status_sub = mk_label(left, "准备就绪", 14, false, theme::MUTED);
+    lv_obj_t* sl = mk_obj(R.status_card);
+    lv_obj_remove_flag(sl, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_height(sl, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(sl, 1);
+    lv_obj_set_style_pad_right(sl, 8, 0);
+    lv_obj_set_flex_flow(sl, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(sl, 2, 0);
+    R.status_title = mk_label(sl, "待机", 26, true, theme::TEXT);
+    R.status_sub = mk_label(sl, "准备就绪", 14, false, theme::MUTED);
     lv_obj_set_width(R.status_sub, LV_PCT(100));
+    lv_obj_set_height(R.status_sub, lv_font_get_line_height(theme::font(14, false)) + 2);
     lv_label_set_long_mode(R.status_sub, LV_LABEL_LONG_MODE_DOTS);
-    R.status_sub2 = mk_label(left, "", 13, false, theme::MUTED);
+    R.status_sub2 = mk_label(sl, "", 13, false, theme::MUTED);
     lv_obj_set_width(R.status_sub2, LV_PCT(100));
+    lv_obj_set_height(R.status_sub2, lv_font_get_line_height(theme::font(13, false)) + 2);
     lv_label_set_long_mode(R.status_sub2, LV_LABEL_LONG_MODE_DOTS);
-    mk_label(left, "速度 / Z-offset 在「打印控制」", 10, false, theme::MUTED);
+    mk_label(sl, "打印控制里可调速度 / Z-offset", 10, false, theme::MUTED);
 
     R.status_arc = lv_arc_create(R.status_card);
     lv_obj_set_size(R.status_arc, 104, 104);
@@ -2315,14 +2376,26 @@ void build_home(lv_obj_t* p) {
     R.status_pct = mk_label(R.status_arc, "0%", 20, true, theme::TEXT);
     lv_obj_center(R.status_pct);
 
-    lv_obj_t* quick = mk_obj(p);
-    lv_obj_set_size(quick, LV_PCT(100), 46);
-    lv_obj_set_flex_flow(quick, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(quick, 8, 0);
-    R.home_pause_btn = mk_button(quick, "暂停", false, action_cb, (void*)"PAUSE", 46);
-    R.home_resume_btn = mk_button(quick, "继续", false, action_cb, (void*)"RESUME", 46);
-    R.home_stop_btn = mk_button(quick, "停止", true, action_cb, (void*)"CANCEL_PRINT", 46);
-    R.home_print_btn = mk_button(quick, "打印控制", false, open_print_sheet_cb, nullptr, 46);
+    // 右边 1/4：灯光 / 暂停·继续 / 停止
+    lv_obj_t* right = mk_obj(body);
+    lv_obj_set_height(right, LV_PCT(100));
+    lv_obj_set_flex_grow(right, 1);
+    lv_obj_set_flex_flow(right, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(right, 6, 0);
+
+    R.home_light_btn = mk_home_quick(right, IC_LIGHT, "灯光", ctrl_light_cb,
+                                     &R.home_light_icon, &R.home_light_text);
+    R.home_pause_btn = mk_home_quick(right, IC_PAUSE, "暂停", home_pause_cb,
+                                     &R.home_pause_icon, &R.home_pause_text);
+    R.home_stop_btn = mk_home_quick(right, IC_STOP, "停止", home_stop_cb,
+                                    nullptr, nullptr);
+
+    // 停止按钮用实心主色，和普通快捷操作区分开
+    lv_obj_set_style_bg_color(R.home_stop_btn, theme::c(theme::PRIMARY), 0);
+    lv_obj_t* stop_lbl = lv_obj_get_child(R.home_stop_btn, 0);
+    if (stop_lbl) lv_obj_set_style_text_color(stop_lbl, theme::c(0x201005), 0);
+    stop_lbl = lv_obj_get_child(R.home_stop_btn, 1);
+    if (stop_lbl) lv_obj_set_style_text_color(stop_lbl, theme::c(0x201005), 0);
 }
 
 // 点首页状态卡打开的打印控制浮层
@@ -2993,7 +3066,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.5 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.6 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）
@@ -3945,9 +4018,11 @@ void ui_tick() {
     // status card
     bool printing = (s.print_state == "printing");
     bool paused = (s.print_state == "paused");
-    set_disabled(R.home_pause_btn, !printing);
-    set_disabled(R.home_resume_btn, !paused);
-    set_disabled(R.home_stop_btn, !(printing || paused));
+    bool active = printing || paused;
+    set_disabled(R.home_pause_btn, !active);
+    set_disabled(R.home_stop_btn, !active);
+    if (R.home_pause_text) lv_label_set_text(R.home_pause_text, paused ? "继续" : "暂停");
+    if (R.home_pause_icon) lv_label_set_text(R.home_pause_icon, paused ? IC_PLAY : IC_PAUSE);
     const char* state_txt = printing ? "打印中" : (paused ? "已暂停" : "待机");
 
     if (R.status_title) lv_label_set_text(R.status_title, state_txt);
@@ -3962,7 +4037,7 @@ void ui_tick() {
     if (R.status_sub2) {
         char buf[64];
         if (printing || paused) {
-            snprintf(buf, sizeof(buf), "第 %d / %d 层 · 已用 %s", s.layer, s.layers,
+            snprintf(buf, sizeof(buf), "%d/%d 层 · %s", s.layer, s.layers,
                      fmt_time(s.print_duration).c_str());
             lv_label_set_text(R.status_sub2, buf);
         } else {
