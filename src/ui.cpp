@@ -1000,7 +1000,13 @@ void slider_set_value(int v) {
     if (fh > 0) draw_h = fh + 10 > h ? h : fh + 10;
     lv_obj_set_height(R.tp_fill, draw_h);
     lv_obj_align(R.tp_fill, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_align(R.tp_knob, LV_ALIGN_BOTTOM_MID, 0, -fh);
+    // 手柄不能超出轨道：到 0% / 100% 时贴在两端内侧，
+    // 否则会被滑块的父容器裁掉，看起来像钻到别的元素下面
+    lv_coord_t kh = R.tp_knob ? lv_obj_get_height(R.tp_knob) : 16;
+    lv_coord_t off = fh;
+    if (off > h - kh) off = h - kh;
+    if (off < 0) off = 0;
+    lv_obj_align(R.tp_knob, LV_ALIGN_BOTTOM_MID, 0, -off);
     if (R.tp_big) {
         char buf[16];
         snprintf(buf, sizeof(buf), "%d°C", v);
@@ -1278,6 +1284,7 @@ void build_temp_page(lv_obj_t* screen) {
     lv_obj_t* sl = mk_obj(body);
     lv_obj_set_size(sl, 56, 148);
     lv_obj_add_flag(sl, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(sl, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_add_event_cb(sl, slider_event_cb, LV_EVENT_ALL, nullptr);
     R.tp_slider = sl;
 
@@ -1340,6 +1347,7 @@ void build_temp_page(lv_obj_t* screen) {
                                 (void*)(intptr_t)i);
         }
     }
+
 }
 
 void build_keypad(lv_obj_t* screen) {
@@ -3559,6 +3567,7 @@ void fan_page_cb(lv_event_t* e) {
 
 lv_obj_t* mk_fan_card(lv_obj_t* parent, int idx) {
     lv_obj_t* card = mk_card(parent, theme::SURFACE);
+    lv_obj_add_flag(card, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_set_width(card, LV_PCT(100));
     lv_obj_set_flex_grow(card, 1);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
@@ -3579,6 +3588,7 @@ lv_obj_t* mk_fan_card(lv_obj_t* parent, int idx) {
     R.ctrl_fan_pct[idx] = mk_label(top, "0%", 22, true, theme::TEXT);
 
     lv_obj_t* sl = lv_slider_create(card);
+    lv_obj_add_flag(sl, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_set_size(sl, LV_PCT(100), 20);
     lv_slider_set_range(sl, 0, 100);
     lv_slider_set_value(sl, 0, LV_ANIM_OFF);
@@ -3593,6 +3603,7 @@ lv_obj_t* mk_fan_card(lv_obj_t* parent, int idx) {
     lv_obj_set_style_radius(sl, 999, LV_PART_KNOB);
     lv_obj_set_style_pad_all(sl, 4, LV_PART_KNOB);
     lv_obj_add_event_cb(sl, fan_slider_cb, LV_EVENT_ALL, (void*)(intptr_t)idx);
+    lv_obj_move_foreground(sl);
     R.ctrl_fan_slider[idx] = sl;
     return card;
 }
@@ -3812,7 +3823,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.9 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.10 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）
