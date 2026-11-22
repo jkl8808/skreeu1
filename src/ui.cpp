@@ -763,7 +763,7 @@ void temp_apply(int temp) {
 
 // 前置声明：这两个辅助函数在下面实现
 lv_obj_t* mk_overlay(lv_obj_t* screen);
-lv_obj_t* mk_close_button(lv_obj_t* parent, lv_event_cb_t cb);
+lv_obj_t* mk_back_button(lv_obj_t* parent, lv_event_cb_t cb);
 
 // 自定义快捷温度：所有喷嘴共用，持久化到工作目录下的 skreeu1_temps.cfg
 int g_presets[6] = {180, 200, 220, 240, 260, 280};
@@ -1211,10 +1211,9 @@ void build_temp_page(lv_obj_t* screen) {
     lv_obj_set_flex_flow(hl, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(hl, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(hl, 8, 0);
+    mk_back_button(hl, close_temp_page_cb);
     R.tp_title = mk_label(hl, "T1 温度", 18, true, theme::TEXT);
-    mk_label(hl, "长按可编辑", 10, false, theme::MUTED);
-
-    mk_close_button(head, close_temp_page_cb);
+    mk_label(hl, "长按", 10, false, theme::MUTED);
 
     lv_obj_t* body = mk_obj(pg);
     lv_obj_set_size(body, LV_PCT(100), 148);
@@ -1325,10 +1324,11 @@ void build_keypad(lv_obj_t* screen) {
     lv_obj_t* head = mk_obj(kp);
     lv_obj_set_size(head, LV_PCT(100), 28);
     lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(head, 8, 0);
+    mk_back_button(head, keypad_close_cb);
     R.keypad_title = mk_label(head, "设置喷嘴温度", 18, true, theme::TEXT);
-    mk_close_button(head, keypad_close_cb);
 
     lv_obj_t* valrow = mk_obj(kp);
     lv_obj_set_size(valrow, LV_PCT(100), 40);
@@ -1442,10 +1442,11 @@ void build_nozzle_page(lv_obj_t* screen) {
     lv_obj_t* head = mk_obj(pg);
     lv_obj_set_size(head, LV_PCT(100), 26);
     lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(head, 8, 0);
+    mk_back_button(head, close_nozzle_cb);
     R.nz_title = mk_label(head, "T1 喷嘴", 18, true, theme::TEXT);
-    mk_close_button(head, close_nozzle_cb);
 
     // 直径
     mk_label(pg, "直径", 11, false, theme::MUTED);
@@ -1707,10 +1708,11 @@ void build_color_page(lv_obj_t* screen) {
     lv_obj_t* head = mk_obj(pg);
     lv_obj_set_size(head, LV_PCT(100), 26);
     lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(head, 8, 0);
+    mk_back_button(head, close_color_cb);
     mk_label(head, "选择颜色", 18, true, theme::TEXT);
-    mk_close_button(head, close_color_cb);
 
     lv_obj_t* grid = mk_obj(pg);
     lv_obj_set_size(grid, LV_PCT(100), 150);
@@ -1761,7 +1763,7 @@ lv_obj_t* mk_overlay(lv_obj_t* screen) {
     return o;
 }
 
-lv_obj_t* mk_close_button(lv_obj_t* parent, lv_event_cb_t cb) {
+lv_obj_t* mk_back_button(lv_obj_t* parent, lv_event_cb_t cb) {
     lv_obj_t* b = lv_button_create(parent);
     lv_obj_set_size(b, 30, 30);
     lv_obj_set_style_radius(b, 999, 0);
@@ -1770,7 +1772,7 @@ lv_obj_t* mk_close_button(lv_obj_t* parent, lv_event_cb_t cb) {
     lv_obj_set_style_border_width(b, 0, 0);
     lv_obj_set_style_shadow_width(b, 0, 0);
     lv_obj_set_style_pad_all(b, 0, 0);
-    lv_obj_t* ic = mk_icon(b, IC_CLOSE, 18, theme::TEXT);
+    lv_obj_t* ic = mk_icon(b, IC_ARROW_LEFT, 18, theme::TEXT);
     lv_obj_center(ic);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
     return b;
@@ -1791,6 +1793,7 @@ void build_tool_sheet(lv_obj_t* screen) {
     lv_obj_set_flex_flow(hl, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(hl, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(hl, 8, 0);
+    mk_back_button(hl, close_sheet_cb);
     R.sheet_title = mk_label(hl, "T1 喷嘴", 20, true, theme::TEXT);
 
     lv_obj_t* hr = mk_obj(head);
@@ -1812,7 +1815,6 @@ void build_tool_sheet(lv_obj_t* screen) {
     mk_icon(R.sheet_nfc, IC_NFC, 13, theme::PRIMARY);
     mk_label(R.sheet_nfc, "NFC", 11, true, theme::PRIMARY);
     lv_obj_add_flag(R.sheet_nfc, LV_OBJ_FLAG_HIDDEN);
-    mk_close_button(hr, close_sheet_cb);
 
     // 主体：左耗材 / 右温度
     lv_obj_t* body = mk_obj(sh);
@@ -1957,10 +1959,11 @@ void build_picker(lv_obj_t* screen) {
     lv_obj_t* head = mk_obj(pk);
     lv_obj_set_size(head, LV_PCT(100), 30);
     lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(head, 8, 0);
+    mk_back_button(head, picker_back_cb);
     R.picker_title = mk_label(head, "更换耗材", 18, true, theme::TEXT);
-    mk_close_button(head, picker_back_cb);
 
     lv_obj_t* body = mk_obj(pk);
     lv_obj_set_size(body, LV_PCT(100), 244);
@@ -2336,12 +2339,13 @@ void build_print_sheet(lv_obj_t* screen) {
     lv_obj_t* head = mk_obj(sh);
     lv_obj_set_size(head, LV_PCT(100), 30);
     lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
-    mk_label(head, "打印控制", 20, true, theme::TEXT);
-    mk_close_button(head, [](lv_event_t*) {
+    lv_obj_set_style_pad_column(head, 8, 0);
+    mk_back_button(head, [](lv_event_t*) {
         if (R.print_sheet) lv_obj_add_flag(R.print_sheet, LV_OBJ_FLAG_HIDDEN);
     });
+    mk_label(head, "打印控制", 20, true, theme::TEXT);
 
     lv_obj_t* body = mk_obj(sh);
     lv_obj_set_width(body, LV_PCT(100));
@@ -2989,7 +2993,7 @@ void build_settings(lv_obj_t* p) {
     lv_obj_align(R.dev_nozzle, LV_ALIGN_TOP_LEFT, 0, 46);
     R.gui_line = mk_label(c2, "原厂 GUI 偏好 · 自动映射 —", 11, false, theme::MUTED);
     lv_obj_align(R.gui_line, LV_ALIGN_TOP_LEFT, 0, 68);
-    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.3 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
+    lv_obj_t* ver = mk_label(c2, "skreeu1 1.6.4 · LVGL + FreeType · 480×320", 11, false, 0x5A616B);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     // 打印偏好（Klipper print_task_config）
@@ -3303,8 +3307,8 @@ void build_net_page(lv_obj_t* screen) {
     lv_obj_set_flex_flow(hl, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(hl, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(hl, 8, 0);
+    mk_back_button(hl, net_close_cb);
     mk_label(hl, "网络", 20, true, theme::TEXT);
-    mk_close_button(head, net_close_cb);
 
     lv_obj_t* sc = mk_card(pg, theme::SURFACE);
     lv_obj_set_size(sc, LV_PCT(100), 58);
@@ -3341,10 +3345,11 @@ void build_net_page(lv_obj_t* screen) {
     lv_obj_t* ph = mk_obj(pw);
     lv_obj_set_size(ph, LV_PCT(100), 28);
     lv_obj_set_flex_flow(ph, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(ph, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+    lv_obj_set_flex_align(ph, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(ph, 8, 0);
+    mk_back_button(ph, net_pw_close_cb);
     R.net_pw_title = mk_label(ph, "Wi-Fi 密码", 17, true, theme::TEXT);
-    mk_close_button(ph, net_pw_close_cb);
 
     lv_obj_t* ta = lv_textarea_create(pw);
     lv_obj_set_size(ta, LV_PCT(100), 38);
